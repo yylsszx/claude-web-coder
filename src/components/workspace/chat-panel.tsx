@@ -73,6 +73,8 @@ interface ChatPanelProps {
   onSaveAsCode: (code: string, language: string) => void
   /** 插入到编辑器当前光标位置（无打开文件时禁用） */
   onInsertCode?: (code: string) => void
+  /** 批量应用：依次为每段代码选目标并 diff 确认 */
+  onApplyAll?: (codes: string[]) => void
   /** 导出当前会话为 Markdown */
   onExportChat: () => void
   /** 编辑历史用户消息并重发（服务端丢弃其后所有消息） */
@@ -83,6 +85,22 @@ const QUICK_ACTIONS = [
   { label: '解释当前文件', prompt: '请逐段解释当前文件的作用，并指出可改进之处。' },
   { label: '优化当前文件', prompt: '请优化当前文件的代码质量、可读性与性能，给出完整的优化后代码。' },
   { label: '修复 Bug', prompt: '请检查当前文件中的潜在 Bug 并给出修复后的完整代码。' },
+]
+
+/** 空会话引导：点击直接填入输入框 */
+const STARTER_PROMPTS = [
+  {
+    label: '创建一个网页小游戏',
+    prompt: '帮我创建一个贪吃蛇小游戏，单个 HTML 文件，包含键盘控制与计分板。',
+  },
+  {
+    label: '写一个处理脚本',
+    prompt: '用 Python 写一个脚本：把指定目录下的图片按修改时间重命名为 001.png、002.png……',
+  },
+  {
+    label: '解释一段代码',
+    prompt: '请逐段解释当前打开文件的作用，并指出可改进之处。',
+  },
 ]
 
 export function ChatPanel({
@@ -104,6 +122,7 @@ export function ChatPanel({
   onRegenerate,
   onSaveAsCode,
   onInsertCode,
+  onApplyAll,
   onExportChat,
   onEditResend,
 }: ChatPanelProps) {
@@ -651,11 +670,30 @@ export function ChatPanel({
               </>
             ) : (
               <>
-                <Sparkles className="h-6 w-6 text-clay/60" />
-                <p className="font-claude-serif text-sm text-foreground/70">开始新的对话</p>
-                <p className="max-w-[220px] text-xs text-muted-foreground">
-                  向 AI 描述需求，或输入 @ 引用文件、打开文件后使用下方快捷指令
+                <Sparkles className="h-7 w-7 text-clay/60" />
+                <p className="font-claude-serif text-base text-foreground/80">今天想构建点什么？</p>
+                <p className="max-w-[260px] text-xs text-muted-foreground">
+                  描述你的想法，AI 会直接在工作区创建与修改文件；输入 @ 可引用文件作为上下文
                 </p>
+                <div className="mt-2 grid w-full max-w-[300px] gap-1.5">
+                  {STARTER_PROMPTS.map((p) => (
+                    <button
+                      key={p.label}
+                      className="group rounded-lg border border-border bg-card px-3 py-2 text-left transition-colors hover:border-clay/40 hover:bg-clay/5"
+                      onClick={() => {
+                        setInput(p.prompt)
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      <span className="block text-[12.5px] font-medium text-foreground/85 transition-colors group-hover:text-clay">
+                        {p.label}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                        {p.prompt}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </>
             )}
           </div>
@@ -696,6 +734,8 @@ export function ChatPanel({
                     onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
                     onInsertCode={isStreaming(msg.id) ? undefined : onInsertCode}
                     insertDisabled={!activeFilePath}
+                    onApplyAll={isStreaming(msg.id) ? undefined : onApplyAll}
+                    showBatchTools={!isStreaming(msg.id)}
                   />
                 ) : editingId === msg.id ? (
                   /* 内联编辑用户消息 */

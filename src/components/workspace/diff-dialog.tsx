@@ -24,6 +24,8 @@ interface DiffDialogProps {
   incoming: string
   applying?: boolean
   onConfirm: () => void
+  /** 批量应用进度（多代码块队列中显示「第 X / N 段」） */
+  batchProgress?: { current: number; total: number }
 }
 
 type DiffRow = { type: 'add' | 'del' | 'same'; text: string }
@@ -51,6 +53,7 @@ export function DiffDialog({
   incoming,
   applying,
   onConfirm,
+  batchProgress,
 }: DiffDialogProps) {
   const rows = useMemo(
     () => (open ? buildRows(original, incoming) : []),
@@ -71,6 +74,11 @@ export function DiffDialog({
             应用前预览改动
           </DialogTitle>
           <DialogDescription>
+            {batchProgress && (
+              <span className="mr-1.5 rounded-full bg-clay/10 px-1.5 py-0.5 text-[11px] text-clay">
+                第 {batchProgress.current} / {batchProgress.total} 段
+              </span>
+            )}
             将用 AI 代码整体替换 <span className="font-mono text-foreground">{filePath}</span>
             ，共 <span className="font-medium text-green-600">+{stats.add}</span>{' '}
             <span className="font-medium text-red-600">-{stats.del}</span> 行

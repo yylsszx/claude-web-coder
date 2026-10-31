@@ -6,7 +6,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
-import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2, SquarePen } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2, Layers, ListChecks, SquarePen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { copyTextToClipboard } from '@/lib/utils'
 
@@ -23,6 +23,30 @@ interface CodeBlockProps {
 
 /** 超过此行数的代码块默认折叠 */
 const COLLAPSE_LINES = 28
+
+/** 解析 Markdown 中的 fenced code block（```lang … ```），与渲染器行为对应，供批量操作使用 */
+function parseCodeBlocks(content: string): { language: string; code: string }[] {
+  const blocks: { language: string; code: string }[] = []
+  let inBlock = false
+  let lang = ''
+  let buf: string[] = []
+  for (const line of content.split('\n')) {
+    const fence = /^\s*```(.*)$/.exec(line)
+    if (fence) {
+      if (!inBlock) {
+        inBlock = true
+        lang = fence[1].trim().split(/[\s:]+/)[0] ?? ''
+        buf = []
+      } else {
+        inBlock = false
+        blocks.push({ language: lang, code: buf.join('\n') })
+      }
+      continue
+    }
+    if (inBlock) buf.push(line)
+  }
+  return blocks
+}
 
 /** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件；超长自动折叠 */
 function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert, insertDisabled }: CodeBlockProps) {
@@ -146,6 +170,10 @@ interface AiMessageProps {
   onInsertCode?: (code: string) => void
   /** 无打开文件时禁用插入 */
   insertDisabled?: boolean
+  /** 批量应用：把全部代码块依次走「选目标 → diff 确认」队列（流式生成中不传） */
+  onApplyAll?: (codes: string[]) => void
+  /** 是否显示批量工具行（≥2 段代码时出现） */
+  showBatchTools?: boolean
 }
 
 /** 渲染 AI 回复（Markdown + 代码块） */
@@ -156,7 +184,24 @@ export const AiMessage = memo(function AiMessage({
   onSaveAsCode,
   onInsertCode,
   insertDisabled,
+  onApplyAll,
+  showBatchTools,
 }: AiMessageProps) {
+  const blocks = useMemo(() => parseCodeBlocks(content), [content])
+  const [allCopied, setAllCopied] = useState(false)
+
+  /** 以 Markdown 格式复制全部代码块（保留语言围栏，便于粘贴回对话或文档） */
+  const handleCopyAll = async () => {
+    const text = blocks
+      .map((b) => '```' + b.language + '\n' + b.code + '\n```')
+      .join('\n\n')
+    const ok = await copyTextToClipboard(text)
+    if (ok) {
+      setAllCopied(true)
+      setTimeout(() => setAllCopied(false), 1500)
+    }
+  }
+
   return (
     <div className="ai-markdown">
       <ReactMarkdown
@@ -203,6 +248,41 @@ export const AiMessage = memo(function AiMessage({
       >
         {content}
       </ReactMarkdown>
+      {showBatchTools && blocks.length >= 2 && (
+        <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
+          <Layers className="h-3 w-3 shrink-0 text-clay" />
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {blocks.length} 段代码
+          </span>
+          {onApplyAll && (
+            <button
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-clay transition-colors hover:bg-clay/10"
+              onClick={() => onApplyAll(blocks.map((b) => b.code))}
+              title="依次为每段代码选择目标文件并确认 diff"
+            >
+              <ListChecks className="h-3 w-3" />
+              应用全部…
+            </button>
+          )}
+          <button
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+            onClick={() => void handleCopyAll()}
+            title="以 Markdown 格式复制全部代码块"
+          >
+            {allCopied ? (
+              <>
+                <Check className="h-3 w-3 text-green-600" />
+                已复制
+              </>
+            ) : (
+              <>
+                <Copy className="h-3 w-3" />
+                复制全部
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   )
 })

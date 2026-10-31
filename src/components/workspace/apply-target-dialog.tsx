@@ -27,6 +27,8 @@ interface ApplyTargetDialogProps {
   onPick: (fileId: string) => void
   /** 上次应用目标（置顶提示） */
   lastTargetId?: string | null
+  /** 批量应用进度（多代码块队列中显示「第 X / N 段」） */
+  batchProgress?: { current: number; total: number }
 }
 
 interface TargetRow {
@@ -44,6 +46,7 @@ export function ApplyTargetDialog({
   files,
   onPick,
   lastTargetId,
+  batchProgress,
 }: ApplyTargetDialogProps) {
   const [query, setQuery] = useState('')
   // 键盘导航：候选跨分组摊平为序列，↑↓ 移动高亮、Enter 直接选中
@@ -170,6 +173,11 @@ export function ApplyTargetDialog({
             应用到哪个文件？
           </DialogTitle>
           <DialogDescription>
+            {batchProgress && (
+              <span className="mr-1.5 rounded-full bg-clay/10 px-1.5 py-0.5 text-[11px] text-clay">
+                第 {batchProgress.current} / {batchProgress.total} 段
+              </span>
+            )}
             ↑↓ 选择候选 · Enter 直接应用，确认前仍可预览 diff
           </DialogDescription>
         </DialogHeader>

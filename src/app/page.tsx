@@ -60,6 +60,8 @@ export default function WorkspacePage() {
   // ===== 应用代码（目标选择 → diff 预览） / 存为新文件 / 拖拽导入 =====
   const [applyTargetOpen, setApplyTargetOpen] = useState(false)
   const [pendingApplyCode, setPendingApplyCode] = useState('')
+  // 批量应用队列：多代码块依次走「选目标 → diff 确认」，取消即终止
+  const [pendingBatch, setPendingBatch] = useState<{ codes: string[]; idx: number } | null>(null)
   const [diffState, setDiffState] = useState<{ file: FileFull; original: string; code: string } | null>(null)
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
@@ -775,7 +777,23 @@ export default function WorkspacePage() {
         toast({ title: '工作区还没有文件', variant: 'destructive' })
         return
       }
+      setPendingBatch(null)
       setPendingApplyCode(code)
+      setApplyTargetOpen(true)
+    },
+    [files.length, toast]
+  )
+
+  /** 批量应用全部代码块：从第一段开始逐段选择目标，diff 确认后自动衔接下一段 */
+  const openApplyAll = useCallback(
+    (codes: string[]) => {
+      if (!files.length) {
+        toast({ title: '工作区还没有文件', variant: 'destructive' })
+        return
+      }
+      if (!codes.length) return
+      setPendingBatch({ codes, idx: 0 })
+      setPendingApplyCode(codes[0])
       setApplyTargetOpen(true)
     },
     [files.length, toast]
@@ -806,7 +824,7 @@ export default function WorkspacePage() {
     [pendingApplyCode, toast]
   )
 
-  /** diff 确认后真正应用并关闭 */
+  /** diff 确认后真正应用并关闭；批量队列未完则自动弹出下一段的目标选择 */
   const confirmDiff = useCallback(() => {
     if (!diffState) return
     applyToTarget(
@@ -814,7 +832,15 @@ export default function WorkspacePage() {
       diffState.code
     )
     setDiffState(null)
-  }, [applyToTarget, diffState])
+    if (pendingBatch && pendingBatch.idx < pendingBatch.codes.length - 1) {
+      const idx = pendingBatch.idx + 1
+      setPendingBatch({ ...pendingBatch, idx })
+      setPendingApplyCode(pendingBatch.codes[idx])
+      setApplyTargetOpen(true)
+    } else {
+      setPendingBatch(null)
+    }
+  }, [applyToTarget, diffState, pendingBatch])
 
   /** 点击「存为新文件」→ 打开命名对话框 */
   const openSaveAs = useCallback((code: string, language: string) => {
@@ -1041,6 +1067,7 @@ export default function WorkspacePage() {
       onStop={stopGeneration}
       onClear={clearChat}
       onApplyCode={openApplyTarget}
+      onApplyAll={openApplyAll}
       onRegenerate={() => void regenerateLast()}
       onSaveAsCode={openSaveAs}
       onInsertCode={insertCodeToEditor}
@@ -1084,10 +1111,14 @@ export default function WorkspacePage() {
         onOpenChange={setSearchOpen}
         onJump={(fileId, line) => void jumpToLine(fileId, line)}
       />
-      {/* 应用目标选择（代码块「应用到文件…」） */}
+      {/* 应用目标选择（代码块「应用到文件…」/ 批量「应用全部」） */}
       <ApplyTargetDialog
         open={applyTargetOpen}
-        onOpenChange={setApplyTargetOpen}
+        onOpenChange={(open) => {
+          setApplyTargetOpen(open)
+          // 用户主动关闭（Esc / 点遮罩）时终止批量队列
+          if (!open) setPendingBatch(null)
+        }}
         openTabs={openTabs.map((t) => ({ id: t.id, path: t.path }))}
         activeTabId={activeTabId}
         recentMentions={recentMentionIds
@@ -1096,15 +1127,31 @@ export default function WorkspacePage() {
         files={files}
         onPick={(fileId) => void pickApplyTarget(fileId)}
         lastTargetId={lastApplyTargetId}
+        batchProgress={
+          pendingBatch
+            ? { current: pendingBatch.idx + 1, total: pendingBatch.codes.length }
+            : undefined
+        }
       />
       {/* 应用代码前的 diff 预览确认 */}
       <DiffDialog
         open={!!diffState}
-        onOpenChange={(open) => !open && setDiffState(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDiffState(null)
+            // diff 阶段取消同样终止批量队列
+            setPendingBatch(null)
+          }
+        }}
         filePath={diffState?.file.path ?? ''}
         original={diffState?.original ?? ''}
         incoming={diffState?.code ?? ''}
         onConfirm={confirmDiff}
+        batchProgress={
+          pendingBatch
+            ? { current: pendingBatch.idx + 1, total: pendingBatch.codes.length }
+            : undefined
+        }
       />
       {/* 代码块存为新文件 */}
       <SaveAsDialog
