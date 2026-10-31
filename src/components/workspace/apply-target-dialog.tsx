@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileCode2, FileInput, FolderOpen, History, RotateCcw, Search } from 'lucide-react'
 import {
   Dialog,
@@ -46,6 +46,9 @@ export function ApplyTargetDialog({
   lastTargetId,
 }: ApplyTargetDialogProps) {
   const [query, setQuery] = useState('')
+  // 键盘导航：候选跨分组摊平为序列，↑↓ 移动高亮、Enter 直接选中
+  const [activeIdx, setActiveIdx] = useState(0)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   const openTabIds = useMemo(() => new Set(openTabs.map((t) => t.id)), [openTabs])
 
@@ -78,15 +81,62 @@ export function ApplyTargetDialog({
     }
   }, [matched, openTabIds, activeTabId, recentMentions, files, lastTargetId])
 
+  /** 键盘导航序列：按视觉顺序（上次应用 → 打开的标签 → 最近 @ 引用 → 工作区文件） */
+  const flatCandidates = useMemo(() => {
+    const list: FileMeta[] = []
+    if (groups.last) list.push(groups.last)
+    for (const r of groups.opened) list.push(r.file)
+    for (const m of groups.mentions) list.push(m)
+    for (const o of groups.others) list.push(o.file)
+    return list
+  }, [groups])
+
+  // 渲染期调整：过滤词或打开状态变化时把高亮重置到首项（规避 effect 级联渲染）
+  const [navToken, setNavToken] = useState(`${open}|${query}`)
+  const token = `${open}|${query}`
+  if (navToken !== token) {
+    setNavToken(token)
+    setActiveIdx(0)
+  }
+
+  // 高亮变化时保持候选项可见
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-candidate-idx="${activeIdx}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [activeIdx])
+
+  const handleNavKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!flatCandidates.length) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIdx((i) => (i + 1) % flatCandidates.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIdx((i) => (i - 1 + flatCandidates.length) % flatCandidates.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const target = flatCandidates[Math.min(activeIdx, flatCandidates.length - 1)]
+      if (target) pick(target.id)
+    }
+  }
+
   const pick = (fileId: string) => {
     onPick(fileId)
     setQuery('')
+    setActiveIdx(0)
   }
 
-  const renderRow = (row: TargetRow, icon: React.ReactNode) => (
+  /** idx：在扁平导航序列中的序号（-1 表示不参与导航） */
+  const renderRow = (row: TargetRow, icon: React.ReactNode, idx = -1) => (
     <button
-      key={row.file.id}
-      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-clay/10"
+      key={`${row.file.id}-${idx}`}
+      data-candidate-idx={idx}
+      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors ${
+        idx >= 0 && idx === activeIdx
+          ? 'bg-clay/10 text-clay'
+          : 'text-foreground/85 hover:bg-clay/10'
+      }`}
+      onMouseEnter={() => idx >= 0 && setActiveIdx(idx)}
       onClick={() => pick(row.file.id)}
     >
       {icon}
@@ -120,7 +170,7 @@ export function ApplyTargetDialog({
             应用到哪个文件？
           </DialogTitle>
           <DialogDescription>
-            选择 AI 代码的写入目标，确认前仍可预览 diff
+            ↑↓ 选择候选 · Enter 直接应用，确认前仍可预览 diff
           </DialogDescription>
         </DialogHeader>
 
@@ -129,13 +179,14 @@ export function ApplyTargetDialog({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="按路径过滤文件…"
+            onKeyDown={handleNavKeyDown}
+            placeholder="按路径过滤，或 ↑↓ 选择 + Enter 应用…"
             className="h-8 pl-8 text-[13px]"
             autoFocus
           />
         </div>
 
-        <div className="thin-scrollbar max-h-[46vh] min-h-0 space-y-3 overflow-y-auto pr-0.5">
+        <div ref={listRef} className="thin-scrollbar max-h-[46vh] min-h-0 space-y-3 overflow-y-auto pr-0.5">
           {empty && (
             <p className="py-6 text-center text-[13px] text-muted-foreground">
               没有匹配的文件
@@ -149,7 +200,8 @@ export function ApplyTargetDialog({
               <div className="space-y-0.5">
                 {renderRow(
                   { file: groups.last, badge: '' },
-                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />,
+                  0
                 )}
               </div>
             </div>
@@ -160,7 +212,9 @@ export function ApplyTargetDialog({
                 <FolderOpen className="h-3 w-3" /> 打开的标签
               </p>
               <div className="space-y-0.5">
-                {groups.opened.map((row) => renderRow(row, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />))}
+                {groups.opened.map((row, i) =>
+                  renderRow(row, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />, (groups.last ? 1 : 0) + i)
+                )}
               </div>
             </div>
           )}
@@ -170,7 +224,9 @@ export function ApplyTargetDialog({
                 <History className="h-3 w-3" /> 最近 @ 引用
               </p>
               <div className="space-y-0.5">
-                {groups.mentions.map((m) => renderRow({ file: m, badge: '' }, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />))}
+                {groups.mentions.map((m, i) =>
+                  renderRow({ file: m, badge: '' }, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />, (groups.last ? 1 : 0) + groups.opened.length + i)
+                )}
               </div>
             </div>
           )}
@@ -180,7 +236,9 @@ export function ApplyTargetDialog({
                 <FileCode2 className="h-3 w-3" /> 工作区文件
               </p>
               <div className="space-y-0.5">
-                {groups.others.map((row) => renderRow(row, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />))}
+                {groups.others.map((row, i) =>
+                  renderRow(row, <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />, (groups.last ? 1 : 0) + groups.opened.length + groups.mentions.length + i)
+                )}
               </div>
             </div>
           )}

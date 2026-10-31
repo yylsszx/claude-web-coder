@@ -849,7 +849,7 @@ export default function WorkspacePage() {
     [openFile, refreshFiles, saveAsState, toast]
   )
 
-  /** 导出当前会话为 Markdown 文件 */
+  /** 导出当前会话为 Markdown 文件（每条消息带时间戳，文件名带日期） */
   const exportChat = useCallback(() => {
     const msgs = messagesRef.current
     if (!msgs.length) return
@@ -858,19 +858,26 @@ export default function WorkspacePage() {
     const now = new Date()
     const stamp = now.toLocaleString('zh-CN', { hour12: false })
     const body = msgs
-      .map((m) => `## ${m.role === 'user' ? '🙋 用户' : '✨ AI'}\n\n${m.content.trim()}`)
+      .map((m) => {
+        const t = new Date(m.createdAt)
+        const time = Number.isNaN(t.getTime())
+          ? ''
+          : `（${t.toLocaleString('zh-CN', { hour12: false })}）`
+        return `## ${m.role === 'user' ? '🙋 用户' : '✨ AI'}${time}\n\n${m.content.trim()}`
+      })
       .join('\n\n---\n\n')
     const md = `# 会话：${title}\n\n> 导出自 Claude 风格 AI 编程工作台 · ${stamp} · 共 ${msgs.length} 条消息\n\n---\n\n${body}\n`
+    const dateTag = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     const safeName =
       title.replace(/[/\\:*?"<>|\s]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '') || 'chat'
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${safeName}.md`
+    a.download = `${safeName}-${dateTag}.md`
     a.click()
     URL.revokeObjectURL(url)
-    toast({ title: '会话已导出', description: `${safeName}.md` })
+    toast({ title: '会话已导出', description: `${safeName}-${dateTag}.md` })
   }, [sessions, toast])
 
   /** 从全局搜索跳转：打开文件并定位到指定行 */

@@ -110,6 +110,7 @@ export function ChatPanel({
   const stickToBottomRef = useRef(true)
   const [showJumpButton, setShowJumpButton] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   // 时间戳等依赖客户端时钟/时区的内容仅在挂载后渲染，避免 SSR hydration mismatch
   const mounted = useMounted()
   // 当前文件是否作为上下文附加给 AI（切换文件时自动重新附加）
@@ -158,6 +159,22 @@ export function ChatPanel({
   }, [messages, searching, searchQuery])
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
+
+  // 焦点在对话面板内时 Ctrl/⌘ + F 打开会话内搜索（不干扰编辑器/全局搜索）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return
+      if (e.key.toLowerCase() !== 'f') return
+      const panel = panelRef.current
+      const active = document.activeElement
+      if (!panel || !active || !panel.contains(active)) return
+      e.preventDefault()
+      setSearchOpen(true)
+      setSearchQuery('')
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   /** 会话下拉按标题过滤（打开时清空） */
   const filteredSessions = useMemo(() => {
@@ -396,7 +413,7 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={panelRef} className="flex h-full flex-col">
       {/* 头部：会话切换器 */}
       <div className="flex items-center gap-1.5 border-b border-border bg-card px-3 py-2">
         <Sparkles className="h-4 w-4 shrink-0 text-clay" />

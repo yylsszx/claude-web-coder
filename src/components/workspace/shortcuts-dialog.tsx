@@ -19,6 +19,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
     items: [
       { keys: ['Ctrl/⌘', 'P'], desc: '快速打开文件（按文件名搜索）' },
       { keys: ['Ctrl/⌘', 'Shift', 'F'], desc: '全局搜索（文件名 + 内容）' },
+      { keys: ['Ctrl/⌘', 'F'], desc: '会话内搜索消息（焦点在对话面板时）' },
       { keys: ['Ctrl/⌘', 'S'], desc: '保存当前文件' },
     ],
   },
