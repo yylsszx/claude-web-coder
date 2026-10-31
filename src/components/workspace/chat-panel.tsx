@@ -16,6 +16,7 @@ import {
   Pin,
   Plus,
   RefreshCw,
+  Quote,
   Search,
   SendHorizonal,
   Sparkles,
@@ -514,6 +515,28 @@ export function ChatPanel({
     }
   }
 
+  /** 引用回复：把该条 AI 回复的摘要以 Markdown 引用格式填入输入框，便于针对性追问 */
+  const quoteMessage = (content: string) => {
+    const lines = content
+      .split('\n')
+      .map((l) => l.replace(/^[\s#>*`\-|]+/, '').trim()) // 剥掉标题 / 列表 / 引用等 Markdown 前缀
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((l) => (l.length > 80 ? l.slice(0, 80) + '…' : l))
+    if (lines.length === 0) return
+    const quoted = lines.map((l) => '> ' + l).join('\n') + '\n\n'
+    histIndexRef.current = null // 退出输入历史浏览态，转入正常草稿编辑
+    setInput((prev) => (prev.startsWith(quoted) ? prev : quoted + prev))
+    // 受控值渲染后聚焦并把光标移到末尾，直接继续输入
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.focus()
+      const end = el.value.length
+      el.setSelectionRange(end, end)
+    })
+  }
+
   /** 开始编辑用户消息 */
   const startEdit = (msg: ChatMsg) => {
     setEditingId(msg.id)
@@ -934,6 +957,7 @@ export function ChatPanel({
                     insertDisabled={!activeFilePath}
                     onApplyAll={isStreaming(msg.id) ? undefined : onApplyAll}
                     showBatchTools={!isStreaming(msg.id)}
+                    streaming={isStreaming(msg.id)}
                   />
                 ) : editingId === msg.id ? (
                   /* 内联编辑用户消息 */
@@ -1009,6 +1033,14 @@ export function ChatPanel({
                       复制
                     </>
                   )}
+                </button>
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => quoteMessage(msg.content)}
+                  title="引用此回复到输入框，便于针对性追问"
+                >
+                  <Quote className="h-3 w-3" />
+                  引用
                 </button>
                 {idx === lastMsgIndex && canRegenerate && (
                   <button

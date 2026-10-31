@@ -1,111 +1,181 @@
-'use client'
+"use client";
 
-import { memo, useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { useTheme } from 'next-themes'
-import { useMounted } from '@/hooks/use-mounted'
-import { Check, ChevronDown, ChevronUp, Copy, Download, FileInput, FilePlus2, Layers, ListChecks, SquarePen } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { copyTextToClipboard } from '@/lib/utils'
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import {
+  oneDark,
+  oneLight,
+} from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useTheme } from "next-themes";
+import { useMounted } from "@/hooks/use-mounted";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Download,
+  FileInput,
+  FilePlus2,
+  Layers,
+  ListChecks,
+  SquarePen,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { copyTextToClipboard } from "@/lib/utils";
 
 interface CodeBlockProps {
-  language: string
-  code: string
-  onApply?: (code: string) => void
-  applyDisabled?: boolean
-  onSaveAs?: (code: string, language: string) => void
+  language: string;
+  code: string;
+  onApply?: (code: string) => void;
+  applyDisabled?: boolean;
+  onSaveAs?: (code: string, language: string) => void;
   /** 插入到编辑器当前光标位置 */
-  onInsert?: (code: string) => void
-  insertDisabled?: boolean
+  onInsert?: (code: string) => void;
+  insertDisabled?: boolean;
 }
 
 /** 超过此行数的代码块默认折叠 */
-const COLLAPSE_LINES = 28
+const COLLAPSE_LINES = 28;
 
 /** 语言标注 → 下载文件扩展名（覆盖 AI 常见写法，如 python/py、c++/cpp） */
 const LANG_EXT: Record<string, string> = {
-  python: 'py', py: 'py', ipython: 'py',
-  javascript: 'js', js: 'js', jsx: 'jsx', node: 'js',
-  typescript: 'ts', ts: 'ts', tsx: 'tsx',
-  html: 'html', xml: 'xml', svg: 'svg', vue: 'vue', svelte: 'svelte',
-  css: 'css', scss: 'scss', sass: 'sass', less: 'less',
-  json: 'json', json5: 'json5', jsonc: 'jsonc',
-  markdown: 'md', md: 'md',
-  bash: 'sh', sh: 'sh', shell: 'sh', zsh: 'sh', console: 'sh',
-  java: 'java', go: 'go', golang: 'go', rust: 'rs', rs: 'rs',
-  c: 'c', cpp: 'cpp', 'c++': 'cpp', csharp: 'cs', 'c#': 'cs', cs: 'cs',
-  ruby: 'rb', rb: 'rb', php: 'php', swift: 'swift', kotlin: 'kt', kt: 'kt',
-  sql: 'sql', yaml: 'yml', yml: 'yml', toml: 'toml',
-  r: 'r', lua: 'lua', perl: 'pl', pl: 'pl', dart: 'dart',
-  dockerfile: 'Dockerfile', makefile: 'Makefile', ini: 'ini', env: 'env',
-}
+  python: "py",
+  py: "py",
+  ipython: "py",
+  javascript: "js",
+  js: "js",
+  jsx: "jsx",
+  node: "js",
+  typescript: "ts",
+  ts: "ts",
+  tsx: "tsx",
+  html: "html",
+  xml: "xml",
+  svg: "svg",
+  vue: "vue",
+  svelte: "svelte",
+  css: "css",
+  scss: "scss",
+  sass: "sass",
+  less: "less",
+  json: "json",
+  json5: "json5",
+  jsonc: "jsonc",
+  markdown: "md",
+  md: "md",
+  bash: "sh",
+  sh: "sh",
+  shell: "sh",
+  zsh: "sh",
+  console: "sh",
+  java: "java",
+  go: "go",
+  golang: "go",
+  rust: "rs",
+  rs: "rs",
+  c: "c",
+  cpp: "cpp",
+  "c++": "cpp",
+  csharp: "cs",
+  "c#": "cs",
+  cs: "cs",
+  ruby: "rb",
+  rb: "rb",
+  php: "php",
+  swift: "swift",
+  kotlin: "kt",
+  kt: "kt",
+  sql: "sql",
+  yaml: "yml",
+  yml: "yml",
+  toml: "toml",
+  r: "r",
+  lua: "lua",
+  perl: "pl",
+  pl: "pl",
+  dart: "dart",
+  dockerfile: "Dockerfile",
+  makefile: "Makefile",
+  ini: "ini",
+  env: "env",
+};
 
 /** 把代码块以纯文本下载为对应扩展名的文件 */
 function downloadCodeFile(code: string, language: string) {
-  const ext = LANG_EXT[language.toLowerCase()] ?? 'txt'
-  const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `snippet.${ext}`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  const ext = LANG_EXT[language.toLowerCase()] ?? "txt";
+  const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `snippet.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** 解析 Markdown 中的 fenced code block（```lang … ```），与渲染器行为对应，供批量操作使用 */
-function parseCodeBlocks(content: string): { language: string; code: string }[] {
-  const blocks: { language: string; code: string }[] = []
-  let inBlock = false
-  let lang = ''
-  let buf: string[] = []
-  for (const line of content.split('\n')) {
-    const fence = /^\s*```(.*)$/.exec(line)
+function parseCodeBlocks(
+  content: string,
+): { language: string; code: string }[] {
+  const blocks: { language: string; code: string }[] = [];
+  let inBlock = false;
+  let lang = "";
+  let buf: string[] = [];
+  for (const line of content.split("\n")) {
+    const fence = /^\s*```(.*)$/.exec(line);
     if (fence) {
       if (!inBlock) {
-        inBlock = true
-        lang = fence[1].trim().split(/[\s:]+/)[0] ?? ''
-        buf = []
+        inBlock = true;
+        lang = fence[1].trim().split(/[\s:]+/)[0] ?? "";
+        buf = [];
       } else {
-        inBlock = false
-        blocks.push({ language: lang, code: buf.join('\n') })
+        inBlock = false;
+        blocks.push({ language: lang, code: buf.join("\n") });
       }
-      continue
+      continue;
     }
-    if (inBlock) buf.push(line)
+    if (inBlock) buf.push(line);
   }
-  return blocks
+  return blocks;
 }
 
 /** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件；超长自动折叠 */
-function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert, insertDisabled }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+function CodeBlock({
+  language,
+  code,
+  onApply,
+  applyDisabled,
+  onSaveAs,
+  onInsert,
+  insertDisabled,
+}: CodeBlockProps) {
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   // 主题语法高亮仅在客户端挂载后跟随 resolvedTheme，避免 SSR 与深色客户端 inline style hydration mismatch
-  const mounted = useMounted()
-  const { resolvedTheme } = useTheme()
-  const isDark = mounted && resolvedTheme === 'dark'
-  const lines = useMemo(() => code.split('\n'), [code])
-  const collapsible = lines.length > COLLAPSE_LINES
-  const shownCode = collapsible && !expanded ? lines.slice(0, COLLAPSE_LINES).join('\n') : code
+  const mounted = useMounted();
+  const { resolvedTheme } = useTheme();
+  const isDark = mounted && resolvedTheme === "dark";
+  const lines = useMemo(() => code.split("\n"), [code]);
+  const collapsible = lines.length > COLLAPSE_LINES;
+  const shownCode =
+    collapsible && !expanded ? lines.slice(0, COLLAPSE_LINES).join("\n") : code;
 
   const handleCopy = async () => {
-    const ok = await copyTextToClipboard(code)
+    const ok = await copyTextToClipboard(code);
     if (ok) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     }
-  }
+  };
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border">
       <div className="flex items-center gap-2 border-b border-border bg-secondary/60 px-3 py-1.5">
         <span className="font-mono text-[11px] text-muted-foreground">
-          {language || 'code'}
+          {language || "code"}
           <span className="mx-1.5 opacity-50">·</span>
           {lines.length} 行
         </span>
@@ -116,8 +186,12 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert,
             className="h-6 gap-1 px-2 text-[11px] text-muted-foreground"
             onClick={handleCopy}
           >
-            {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-            {copied ? '已复制' : '复制'}
+            {copied ? (
+              <Check className="h-3 w-3 text-green-600" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+            {copied ? "已复制" : "复制"}
           </Button>
           {onApply && (
             <Button
@@ -139,7 +213,11 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert,
               onClick={() => onInsert(code)}
               disabled={insertDisabled}
               aria-label="插入到当前文件光标处"
-              title={insertDisabled ? '请先在编辑器中打开一个文件' : '插入到当前文件光标处'}
+              title={
+                insertDisabled
+                  ? "请先在编辑器中打开一个文件"
+                  : "插入到当前文件光标处"
+              }
             >
               <SquarePen className="h-3 w-3" />
             </Button>
@@ -161,27 +239,27 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert,
             className="h-6 w-6 px-0 text-muted-foreground"
             onClick={() => downloadCodeFile(code, language)}
             aria-label="下载为文件"
-            title={`下载为文件（.${LANG_EXT[language.toLowerCase()] ?? 'txt'}）`}
+            title={`下载为文件（.${LANG_EXT[language.toLowerCase()] ?? "txt"}）`}
           >
             <Download className="h-3 w-3" />
           </Button>
         </div>
       </div>
       <SyntaxHighlighter
-        language={language || 'text'}
+        language={language || "text"}
         style={isDark ? oneDark : oneLight}
         showLineNumbers
         lineNumberStyle={{
-          color: isDark ? '#6b6a66' : '#c8c6c0',
-          minWidth: '2.4em',
-          paddingRight: '10px',
-          userSelect: 'none',
+          color: isDark ? "#6b6a66" : "#c8c6c0",
+          minWidth: "2.4em",
+          paddingRight: "10px",
+          userSelect: "none",
         }}
         customStyle={{
           margin: 0,
-          padding: '12px 14px',
-          fontSize: '12.5px',
-          background: isDark ? '#282826' : '#ffffff',
+          padding: "12px 14px",
+          fontSize: "12.5px",
+          background: isDark ? "#282826" : "#ffffff",
         }}
         wrapLongLines={false}
       >
@@ -201,30 +279,38 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert,
           ) : (
             <>
               <ChevronDown className="h-3 w-3" />
-              展开全部 {lines.length} 行（剩余 {lines.length - COLLAPSE_LINES} 行）
+              展开全部 {lines.length} 行（剩余 {lines.length - COLLAPSE_LINES}{" "}
+              行）
             </>
           )}
         </button>
       )}
     </div>
-  )
+  );
 }
 
 interface AiMessageProps {
-  content: string
-  onApplyCode?: (code: string) => void
-  applyDisabled?: boolean
+  content: string;
+  onApplyCode?: (code: string) => void;
+  applyDisabled?: boolean;
   /** 存为新文件（代码块操作栏） */
-  onSaveAsCode?: (code: string, language: string) => void
+  onSaveAsCode?: (code: string, language: string) => void;
   /** 插入到编辑器当前光标位置 */
-  onInsertCode?: (code: string) => void
+  onInsertCode?: (code: string) => void;
   /** 无打开文件时禁用插入 */
-  insertDisabled?: boolean
+  insertDisabled?: boolean;
   /** 批量应用：把全部代码块依次走「选目标 → diff 确认」队列（流式生成中不传） */
-  onApplyAll?: (codes: string[]) => void
+  onApplyAll?: (codes: string[]) => void;
   /** 是否显示批量工具行（≥2 段代码时出现） */
-  showBatchTools?: boolean
+  showBatchTools?: boolean;
+  /** 该消息是否正在流式生成（生成中不折叠，结束后按实际高度折叠） */
+  streaming?: boolean;
 }
+
+/** 折叠阈值：内容超过此高度显示「展开全文」（px） */
+const COLLAPSE_HEIGHT = 420;
+/** 迟滞量：避免临界高度抖动（px） */
+const COLLAPSE_HYSTERESIS = 48;
 
 /** 渲染 AI 回复（Markdown + 代码块） */
 export const AiMessage = memo(function AiMessage({
@@ -236,114 +322,175 @@ export const AiMessage = memo(function AiMessage({
   insertDisabled,
   onApplyAll,
   showBatchTools,
+  streaming = false,
 }: AiMessageProps) {
-  const blocks = useMemo(() => parseCodeBlocks(content), [content])
-  const [allCopied, setAllCopied] = useState(false)
+  const blocks = useMemo(() => parseCodeBlocks(content), [content]);
+  const [allCopied, setAllCopied] = useState(false);
+
+  // ===== 长消息折叠 / 展开 =====
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  // 渲染后测量内容实际高度（流式期间 content 持续增长会反复触发，React 对相同值自动去重）
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const over = el.scrollHeight > COLLAPSE_HEIGHT + COLLAPSE_HYSTERESIS;
+    setOverflowing(over);
+    if (!over) setExpanded(false); // 内容变短（如重新生成出短回复）时自动复位
+  }, [content]);
+
+  const collapsed = overflowing && !expanded && !streaming;
 
   /** 以 Markdown 格式复制全部代码块（保留语言围栏，便于粘贴回对话或文档） */
   const handleCopyAll = async () => {
     const text = blocks
-      .map((b) => '```' + b.language + '\n' + b.code + '\n```')
-      .join('\n\n')
-    const ok = await copyTextToClipboard(text)
+      .map((b) => "```" + b.language + "\n" + b.code + "\n```")
+      .join("\n\n");
+    const ok = await copyTextToClipboard(text);
     if (ok) {
-      setAllCopied(true)
-      setTimeout(() => setAllCopied(false), 1500)
+      setAllCopied(true);
+      setTimeout(() => setAllCopied(false), 1500);
     }
-  }
+  };
 
   return (
     <div className="ai-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          /** GFM 表格：横向滚动容器 + Claude 风样式（对齐样式由 remark-gfm 透传到单元格） */
-          table({ children }) {
-            return (
-              <div className="thin-scrollbar my-2 overflow-x-auto rounded-lg border border-border">
-                <table className="w-full border-collapse text-[12.5px] leading-relaxed">{children}</table>
-              </div>
-            )
-          },
-          thead({ children }) {
-            return <thead className="bg-secondary/60">{children}</thead>
-          },
-          tr({ children }) {
-            return <tr className="border-b border-border/60 last:border-b-0">{children}</tr>
-          },
-          th({ children, node: _node, ...rest }) {
-            return (
-              <th
-                className="border-b border-border px-3 py-1.5 text-left font-medium text-foreground/90"
-                {...rest}
-              >
-                {children}
-              </th>
-            )
-          },
-          td({ children, node: _node, ...rest }) {
-            return (
-              <td className="border-b border-border/40 px-3 py-1.5 align-top" {...rest}>
-                {children}
-              </td>
-            )
-          },
-          del({ children }) {
-            return <del className="text-muted-foreground/70">{children}</del>
-          },
-          /** GFM 任务列表复选框：只读展示 */
-          input({ node: _node, ...rest }) {
-            return (
-              <input
-                {...rest}
-                disabled
-                readOnly
-                className="mr-1.5 h-3.5 w-3.5 translate-y-0.5 accent-clay"
-              />
-            )
-          },
-          code(props) {
-            const { className, children } = props
-            const match = /language-([\w-]+)/.exec(className ?? '')
-            if (match) {
-              const code = String(children).replace(/\n$/, '')
-              return (
-                <CodeBlock
-                  language={match[1]}
-                  code={code}
-                  onApply={onApplyCode}
-                  applyDisabled={applyDisabled}
-                  onSaveAs={onSaveAsCode}
-                  onInsert={onInsertCode}
-                  insertDisabled={insertDisabled}
-                />
-              )
-            }
-            return <code className={className}>{children}</code>
-          },
-          pre(props) {
-            // 语言块已被 code 重写为 CodeBlock（div），直接透传；
-            // 无语言标注的代码块则套一层带样式的 <pre>
-            const child = Array.isArray(props.children)
-              ? props.children[0]
-              : props.children
-            const childClassName =
-              child && typeof child === 'object' && 'props' in child
-                ? String((child.props as { className?: string })?.className ?? '')
-                : ''
-            if (/language-/.test(childClassName)) {
-              return <>{props.children}</>
-            }
-            return (
-              <pre className="thin-scrollbar my-2 overflow-x-auto rounded-lg border border-border bg-card p-3 font-mono text-[12.5px] leading-relaxed">
-                {props.children}
-              </pre>
-            )
-          },
-        }}
-      >
-        {content}
-      </ReactMarkdown>
+      <div className="relative">
+        <div
+          ref={bodyRef}
+          className={collapsed ? "overflow-hidden" : undefined}
+          style={collapsed ? { maxHeight: COLLAPSE_HEIGHT } : undefined}
+        >
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              /** GFM 表格：横向滚动容器 + Claude 风样式（对齐样式由 remark-gfm 透传到单元格） */
+              table({ children }) {
+                return (
+                  <div className="thin-scrollbar my-2 overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full border-collapse text-[12.5px] leading-relaxed">
+                      {children}
+                    </table>
+                  </div>
+                );
+              },
+              thead({ children }) {
+                return <thead className="bg-secondary/60">{children}</thead>;
+              },
+              tr({ children }) {
+                return (
+                  <tr className="border-b border-border/60 last:border-b-0">
+                    {children}
+                  </tr>
+                );
+              },
+              th({ children, node: _node, ...rest }) {
+                return (
+                  <th
+                    className="border-b border-border px-3 py-1.5 text-left font-medium text-foreground/90"
+                    {...rest}
+                  >
+                    {children}
+                  </th>
+                );
+              },
+              td({ children, node: _node, ...rest }) {
+                return (
+                  <td
+                    className="border-b border-border/40 px-3 py-1.5 align-top"
+                    {...rest}
+                  >
+                    {children}
+                  </td>
+                );
+              },
+              del({ children }) {
+                return (
+                  <del className="text-muted-foreground/70">{children}</del>
+                );
+              },
+              /** GFM 任务列表复选框：只读展示 */
+              input({ node: _node, ...rest }) {
+                return (
+                  <input
+                    {...rest}
+                    disabled
+                    readOnly
+                    className="mr-1.5 h-3.5 w-3.5 translate-y-0.5 accent-clay"
+                  />
+                );
+              },
+              code(props) {
+                const { className, children } = props;
+                const match = /language-([\w-]+)/.exec(className ?? "");
+                if (match) {
+                  const code = String(children).replace(/\n$/, "");
+                  return (
+                    <CodeBlock
+                      language={match[1]}
+                      code={code}
+                      onApply={onApplyCode}
+                      applyDisabled={applyDisabled}
+                      onSaveAs={onSaveAsCode}
+                      onInsert={onInsertCode}
+                      insertDisabled={insertDisabled}
+                    />
+                  );
+                }
+                return <code className={className}>{children}</code>;
+              },
+              pre(props) {
+                // 语言块已被 code 重写为 CodeBlock（div），直接透传；
+                // 无语言标注的代码块则套一层带样式的 <pre>
+                const child = Array.isArray(props.children)
+                  ? props.children[0]
+                  : props.children;
+                const childClassName =
+                  child && typeof child === "object" && "props" in child
+                    ? String(
+                        (child.props as { className?: string })?.className ??
+                          "",
+                      )
+                    : "";
+                if (/language-/.test(childClassName)) {
+                  return <>{props.children}</>;
+                }
+                return (
+                  <pre className="thin-scrollbar my-2 overflow-x-auto rounded-lg border border-border bg-card p-3 font-mono text-[12.5px] leading-relaxed">
+                    {props.children}
+                  </pre>
+                );
+              },
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
+        {collapsed && (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-card to-transparent"
+            aria-hidden
+          />
+        )}
+        {overflowing && !streaming && (
+          <button
+            className={`relative z-10 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-clay transition-colors hover:bg-clay/10 ${
+              collapsed ? "-mt-1.5" : "mt-1.5"
+            }`}
+            onClick={() => setExpanded((v) => !v)}
+            title={collapsed ? "展开完整回复" : "收起回复"}
+          >
+            {collapsed ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronUp className="h-3 w-3" />
+            )}
+            {collapsed ? "展开全文" : "收起"}
+          </button>
+        )}
+      </div>
       {showBatchTools && blocks.length >= 2 && (
         <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
           <Layers className="h-3 w-3 shrink-0 text-clay" />
@@ -380,5 +527,5 @@ export const AiMessage = memo(function AiMessage({
         </div>
       )}
     </div>
-  )
-})
+  );
+});

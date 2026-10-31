@@ -14,7 +14,8 @@ server.log
 # 本地数据库（schema 保留，数据不入库）
 db/
 
-# 运行时脚本与沙箱产物
+# 运行时脚本与沙箱产物（scripts/ 含本地调试工具，不入库）
+scripts/
 .zscripts/
 download/
 upload/
