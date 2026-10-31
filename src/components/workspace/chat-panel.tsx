@@ -471,6 +471,37 @@ export function ChatPanel({
     detectMention(value, e.target.selectionStart ?? value.length)
   }
 
+  /** 判定粘贴文本是否像代码：≥2 行、未带围栏、且命中至少两个代码特征（避免把普通段落误包） */
+  const looksLikeCode = (text: string): boolean => {
+    if (text.split('\n').length < 2) return false
+    if (text.trimStart().startsWith('```')) return false // 已带围栏不重复包裹
+    let signals = 0
+    if (/[{};]\s*$/m.test(text)) signals++ // 行尾花括号 / 分号
+    if (/^\s*(def |class |function |const |let |var |import |from |#include|package |using |public |private )/m.test(text)) signals++
+    if (/(=>|::|&&|\|\||!==|===)/.test(text)) signals++
+    if (/^\s{2,}\S/m.test(text)) signals++ // 缩进结构
+    if (/<\/?[a-zA-Z][^>]*>/.test(text)) signals++ // HTML / XML 标签
+    if (/^\s*[\w.-]+\(.*\)\s*:?\s*$/m.test(text)) signals++ // 函数调用行
+    return signals >= 2
+  }
+
+  /** 粘贴多行代码自动包裹 Markdown 代码围栏（光标落在闭合围栏之后），其余照常粘贴 */
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text/plain')
+    if (!text || !looksLikeCode(text)) return
+    e.preventDefault()
+    const ta = e.currentTarget
+    const fenced = '```\n' + text.replace(/\n+$/, '') + '\n```'
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const next = input.slice(0, start) + fenced + input.slice(end)
+    setInput(next)
+    persistDraft(next)
+    requestAnimationFrame(() => {
+      ta.setSelectionRange(start + fenced.length, start + fenced.length)
+    })
+  }
+
   /** 选中候选文件：替换输入框中的 @token，插入 @path 并记录引用 */
   const pickMention = (file: FileMeta) => {
     const el = textareaRef.current
@@ -1379,6 +1410,7 @@ export function ChatPanel({
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             onBlur={() => {
               // 延迟关闭，避免点击下拉项时误收起（下拉项用 mousedown + preventDefault 保持焦点）
               setTimeout(() => setMentionOpen(false), 120)

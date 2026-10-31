@@ -27,6 +27,7 @@ import { DiffDialog } from '@/components/workspace/diff-dialog'
 import { SaveAsDialog, suggestFileName } from '@/components/workspace/save-as-dialog'
 import { ApplyTargetDialog } from '@/components/workspace/apply-target-dialog'
 import { ShortcutsDialog } from '@/components/workspace/shortcuts-dialog'
+import pkg from '../../package.json'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
@@ -1574,6 +1575,10 @@ export default function WorkspacePage() {
           </CommandGroup>
         )}
       </CommandList>
+      <div className="flex items-center justify-between border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+        <span className="tabular-nums">v{pkg.version}</span>
+        <span>Esc 关闭 · Ctrl/⌘ K 唤起</span>
+      </div>
     </CommandDialog>
   )
 
@@ -1613,6 +1618,7 @@ export default function WorkspacePage() {
         open={searchOpen}
         onOpenChange={setSearchOpen}
         onJump={(fileId, line) => void jumpToLine(fileId, line)}
+        onJumpToSession={(id) => void switchSession(id)}
       />
       {/* 应用目标选择（代码块「应用到文件…」/ 批量「应用全部」） */}
       <ApplyTargetDialog

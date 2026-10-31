@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FileCode2, Loader2, Search, TextSearch } from 'lucide-react'
+import { FileCode2, Loader2, MessageSquareText, Search, TextSearch } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -26,16 +26,30 @@ interface SearchResultItem {
   pathMatch: boolean
 }
 
+/** 跨会话消息搜索的命中条目 */
+interface MessageSearchItem {
+  messageId: string
+  sessionId: string
+  sessionTitle: string
+  role: string
+  snippet: string
+  matchCount: number
+  createdAt: string
+}
+
 interface GlobalSearchProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** 点击命中行：打开文件并跳转到该行 */
   onJump: (fileId: string, line: number) => void
+  /** 点击命中消息：切换到对应会话 */
+  onJumpToSession: (sessionId: string) => void
 }
 
-export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) {
+export function GlobalSearch({ open, onOpenChange, onJump, onJumpToSession }: GlobalSearchProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResultItem[]>([])
+  const [msgResults, setMsgResults] = useState<MessageSearchItem[]>([])
   const [searching, setSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -53,17 +67,26 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
     const q = query.trim()
     if (!q) {
       setResults([])
+      setMsgResults([])
       setSearching(false)
       return
     }
     setSearching(true)
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
-        const data = await res.json()
-        if (res.ok) setResults(data.results ?? [])
-      } catch {
-        // 静默失败：保留上次结果
+        // 文件与消息两个接口并行请求，互不阻塞（单个失败不影响另一边保留旧结果）
+        const [fileRes, msgRes] = await Promise.allSettled([
+          fetch(`/api/search?q=${encodeURIComponent(q)}`),
+          fetch(`/api/search/messages?q=${encodeURIComponent(q)}`),
+        ])
+        if (fileRes.status === 'fulfilled' && fileRes.value.ok) {
+          const data = await fileRes.value.json()
+          setResults(data.results ?? [])
+        }
+        if (msgRes.status === 'fulfilled' && msgRes.value.ok) {
+          const data = await msgRes.value.json()
+          setMsgResults(data.results ?? [])
+        }
       } finally {
         setSearching(false)
       }
@@ -78,6 +101,11 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
     onJump(fileId, line)
   }
 
+  const pickMessage = (sessionId: string) => {
+    onOpenChange(false)
+    onJumpToSession(sessionId)
+  }
+
   const trimmed = query.trim()
 
   return (
@@ -85,7 +113,7 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
       <DialogContent className="overflow-hidden p-0 sm:max-w-xl" showCloseButton={false}>
         <DialogHeader className="sr-only">
           <DialogTitle>全局搜索</DialogTitle>
-          <DialogDescription>在所有文件的文件名与内容中搜索</DialogDescription>
+          <DialogDescription>在所有文件的文件名、内容与对话消息中搜索</DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2 border-b border-border px-3.5 py-3">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -93,13 +121,14 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索文件名与内容…"
+            placeholder="搜索文件名、内容与会话消息…"
             className="h-8 border-0 bg-transparent px-0 text-[14px] shadow-none focus-visible:ring-0"
           />
           {searching && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-clay" />}
           {trimmed && !searching && (
             <kbd className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
               {results.length} 个文件
+              {msgResults.length > 0 ? ` · ${msgResults.length} 条消息` : ''}
             </kbd>
           )}
         </div>
@@ -108,14 +137,14 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
           {!trimmed && (
             <div className="flex flex-col items-center gap-1.5 py-10 text-center text-muted-foreground">
               <TextSearch className="h-6 w-6 text-clay/50" />
-              <p className="text-[13px]">输入关键词，搜索所有文件的内容</p>
+              <p className="text-[13px]">输入关键词，搜索文件内容与对话消息</p>
               <p className="text-[11px]">支持跳转到具体行 · Ctrl/⌘ + Shift + F</p>
             </div>
           )}
 
-          {trimmed && !searching && results.length === 0 && (
+          {trimmed && !searching && results.length === 0 && msgResults.length === 0 && (
             <p className="py-10 text-center text-[13px] text-muted-foreground">
-              没有匹配「{trimmed}」的文件或内容
+              没有匹配「{trimmed}」的文件、内容或消息
             </p>
           )}
 
@@ -161,6 +190,35 @@ export function GlobalSearch({ open, onOpenChange, onJump }: GlobalSearchProps) 
               )}
             </div>
           ))}
+
+          {msgResults.length > 0 && (
+            <div className="mt-2 mb-1">
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-clay" />
+                <span className="text-[11px] font-medium text-muted-foreground">对话消息</span>
+              </div>
+              {msgResults.map((msg) => (
+                <button
+                  key={msg.messageId}
+                  className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 pl-6 text-left transition-colors hover:bg-accent"
+                  onClick={() => pickMessage(msg.sessionId)}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-[12px] font-medium">{msg.sessionTitle}</span>
+                    <span className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-[10px] text-muted-foreground">
+                      {msg.role === 'user' ? '用户' : 'AI'}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {msg.matchCount} 处
+                    </span>
+                  </span>
+                  <span className="line-clamp-2 text-[11.5px] leading-relaxed text-muted-foreground">
+                    {msg.snippet}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
