@@ -96,6 +96,8 @@ function fileIcon(language: string) {
 interface FileTreeProps {
   files: FileMeta[]
   activeId: string | null
+  /** 有未保存更改的文件 ID 列表（行尾显示橙点） */
+  dirtyIds?: string[]
   onOpen: (id: string) => void
   onCreate: (path: string) => Promise<boolean>
   onRename: (id: string, newPath: string) => Promise<boolean>
@@ -109,6 +111,7 @@ interface FileTreeProps {
 export function FileTree({
   files,
   activeId,
+  dirtyIds = [],
   onOpen,
   onCreate,
   onRename,
@@ -196,6 +199,7 @@ export function FileTree({
       const file = node.file!
       const Icon = fileIcon(file.language)
       const isActive = file.id === activeId
+      const isDirty = dirtyIds.includes(file.id)
       return (
         <div
           key={file.id}
@@ -217,6 +221,13 @@ export function FileTree({
               {node.name}
             </span>
           </button>
+          {isDirty && (
+            <span
+              className="mr-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-clay"
+              title="有未保存的更改"
+              aria-label="未保存"
+            />
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

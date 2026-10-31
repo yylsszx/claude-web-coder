@@ -151,6 +151,12 @@
 .thin-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
+.dark .thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #4a4a45;
+}
+.dark .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #5a5a54;
+}
 
 /* CodeMirror 与奶油色主题融合 */
 .cm-editor {
@@ -164,6 +170,9 @@
   background: transparent !important;
   border-right: 1px solid var(--border) !important;
   color: #a6a294 !important;
+}
+.dark .cm-gutters {
+  color: #7a7871 !important;
 }
 .cm-activeLine {
   background: rgba(217, 119, 87, 0.06) !important;

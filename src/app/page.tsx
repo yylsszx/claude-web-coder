@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTheme } from 'next-themes'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2 } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -30,6 +31,7 @@ const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
 export default function WorkspacePage() {
   const { toast } = useToast()
   const isMobile = useIsMobile()
+  const { resolvedTheme, setTheme } = useTheme()
 
   // ===== 文件与标签页状态 =====
   const [files, setFiles] = useState<FileMeta[]>([])
@@ -63,6 +65,8 @@ export default function WorkspacePage() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   // 最近一次 @ 引用的文件 ID（供应用目标对话框展示）
   const [recentMentionIds, setRecentMentionIds] = useState<string[]>([])
+  // 上次应用目标文件 ID（应用目标对话框置顶提示）
+  const [lastApplyTargetId, setLastApplyTargetId] = useState<string | null>(null)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -730,6 +734,7 @@ export default function WorkspacePage() {
       setTabStates((prev) => ({ ...prev, [target.id]: 'dirty' }))
       scheduleSave(target.id, code)
       setActiveTabId(target.id)
+      setLastApplyTargetId(target.id)
       toast({
         title: '已应用到文件',
         description: target.path,
@@ -956,6 +961,9 @@ export default function WorkspacePage() {
     <FileTree
       files={files}
       activeId={activeTabId}
+      dirtyIds={Object.entries(tabStates)
+        .filter(([, s]) => s !== 'saved')
+        .map(([id]) => id)}
       onOpen={openFile}
       onCreate={createFile}
       onRename={renameFile}
@@ -1059,6 +1067,7 @@ export default function WorkspacePage() {
           .filter((f): f is FileMeta => !!f)}
         files={files}
         onPick={(fileId) => void pickApplyTarget(fileId)}
+        lastTargetId={lastApplyTargetId}
       />
       {/* 应用代码前的 diff 预览确认 */}
       <DiffDialog
@@ -1111,6 +1120,18 @@ export default function WorkspacePage() {
           <Github className="h-4 w-4" />
           <span className="hidden sm:inline">GitHub</span>
         </a>
+        <button
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+          title={resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+          aria-label="切换深浅色模式"
+        >
+          {resolvedTheme === 'dark' ? (
+            <Sun className="h-4 w-4" />
+          ) : (
+            <Moon className="h-4 w-4" />
+          )}
+        </button>
         <button
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onClick={() => setShortcutsOpen(true)}

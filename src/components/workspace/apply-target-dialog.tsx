@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { FileCode2, FileInput, FolderOpen, History, Search } from 'lucide-react'
+import { FileCode2, FileInput, FolderOpen, History, RotateCcw, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,8 @@ interface ApplyTargetDialogProps {
   files: FileMeta[]
   /** 选中目标文件 id */
   onPick: (fileId: string) => void
+  /** 上次应用目标（置顶提示） */
+  lastTargetId?: string | null
 }
 
 interface TargetRow {
@@ -41,6 +43,7 @@ export function ApplyTargetDialog({
   recentMentions,
   files,
   onPick,
+  lastTargetId,
 }: ApplyTargetDialogProps) {
   const [query, setQuery] = useState('')
 
@@ -64,14 +67,16 @@ export function ApplyTargetDialog({
       }
     }
     const mentionIds = new Set(recentMentions.map((m) => m.id))
+    const last = files.find((f) => f.id === lastTargetId) ?? null
     return {
       opened,
       others,
       mentions: recentMentions.filter(
         (m) => mentionIds.has(m.id) && files.some((f) => f.id === m.id)
       ),
+      last,
     }
-  }, [matched, openTabIds, activeTabId, recentMentions, files])
+  }, [matched, openTabIds, activeTabId, recentMentions, files, lastTargetId])
 
   const pick = (fileId: string) => {
     onPick(fileId)
@@ -100,7 +105,11 @@ export function ApplyTargetDialog({
     </button>
   )
 
-  const empty = groups.opened.length === 0 && groups.mentions.length === 0 && groups.others.length === 0
+  const empty =
+    groups.opened.length === 0 &&
+    groups.mentions.length === 0 &&
+    groups.others.length === 0 &&
+    !groups.last
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setQuery('') }}>
@@ -131,6 +140,19 @@ export function ApplyTargetDialog({
             <p className="py-6 text-center text-[13px] text-muted-foreground">
               没有匹配的文件
             </p>
+          )}
+          {groups.last && (
+            <div>
+              <p className="mb-1 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <RotateCcw className="h-3 w-3" /> 上次应用
+              </p>
+              <div className="space-y-0.5">
+                {renderRow(
+                  { file: groups.last, badge: '' },
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />
+                )}
+              </div>
+            </div>
           )}
           {groups.opened.length > 0 && (
             <div>

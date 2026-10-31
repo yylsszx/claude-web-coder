@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
+import { useTheme } from 'next-themes'
 import { EditorView } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import type { ViewUpdate } from '@codemirror/view'
@@ -129,6 +130,7 @@ export function CodeEditor({
   onAskSelection,
   askDisabled,
 }: CodeEditorProps) {
+  const { resolvedTheme } = useTheme()
   const editorViewRef = useRef<EditorView | null>(null)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -402,7 +404,7 @@ export function CodeEditor({
               value={file.content}
               height="100%"
               style={{ height: '100%' }}
-              theme="light"
+              theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
               extensions={extensions}
               onChange={onChange}
               onUpdate={handleUpdate}
