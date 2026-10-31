@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowDown,
   AtSign,
   Check,
   Copy,
@@ -104,7 +105,10 @@ export function ChatPanel({
   onEditResend,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  // 智能滚动：用户接近底部时才跟随流式输出，向上翻阅时不再被拽回
+  const stickToBottomRef = useRef(true)
+  const [showJumpButton, setShowJumpButton] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // 时间戳等依赖客户端时钟/时区的内容仅在挂载后渲染，避免 SSR hydration mismatch
   const mounted = useMounted()
@@ -116,6 +120,8 @@ export function ChatPanel({
     setFileAttached(true)
   }
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
+  // 会话列表搜索过滤
+  const [sessionFilter, setSessionFilter] = useState('')
   const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null)
   const [renameTitle, setRenameTitle] = useState('')
   const [renaming, setRenaming] = useState(false)
@@ -153,9 +159,35 @@ export function ChatPanel({
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
 
+  /** 会话下拉按标题过滤（打开时清空） */
+  const filteredSessions = useMemo(() => {
+    const q = sessionFilter.trim().toLowerCase()
+    if (!q) return sessions
+    return sessions.filter((s) => s.title.toLowerCase().includes(q))
+  }, [sessions, sessionFilter])
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!stickToBottomRef.current) return
+    const el = listRef.current
+    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [messages.length, loading, messages[messages.length - 1]?.content])
+
+  /** 消息列表滚动：距底 80px 内视为跟随；离开底部时出现「回到底部」按钮 */
+  const handleListScroll = () => {
+    const el = listRef.current
+    if (!el) return
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    stickToBottomRef.current = near
+    setShowJumpButton(!near)
+  }
+
+  /** 回到底部并恢复跟随 */
+  const jumpToBottom = () => {
+    stickToBottomRef.current = true
+    setShowJumpButton(false)
+    const el = listRef.current
+    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }
 
   /** 输入框随内容自动增高（上限 200px，超出内部滚动），发送清空后自动回落 */
   useEffect(() => {
@@ -195,6 +227,9 @@ export function ChatPanel({
     setMentions([])
     setMentionOpen(false)
     setMentionQuery('')
+    // 用户主动发送：恢复跟随并滚到底部
+    stickToBottomRef.current = true
+    setShowJumpButton(false)
   }
 
   const isStreaming = (id: string) => id === streamingId
@@ -365,7 +400,10 @@ export function ChatPanel({
       {/* 头部：会话切换器 */}
       <div className="flex items-center gap-1.5 border-b border-border bg-card px-3 py-2">
         <Sparkles className="h-4 w-4 shrink-0 text-clay" />
-        <Popover open={sessionMenuOpen} onOpenChange={setSessionMenuOpen}>
+        <Popover open={sessionMenuOpen} onOpenChange={(open) => {
+          setSessionMenuOpen(open)
+          if (open) setSessionFilter('')
+        }}>
           <PopoverTrigger asChild>
             <button
               className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent"
@@ -389,8 +427,28 @@ export function ChatPanel({
             >
               <MessageSquarePlus className="h-4 w-4" /> 新建会话
             </button>
+            <div className="pb-1">
+              <Input
+                value={sessionFilter}
+                onChange={(e) => setSessionFilter(e.target.value)}
+                placeholder="搜索会话…"
+                className="h-7 bg-secondary/50 text-[12.5px]"
+              />
+            </div>
+            {sessions.length > 1 && (
+              <div className="px-2 pb-1 text-[10.5px] text-muted-foreground">
+                {sessionFilter.trim()
+                  ? `${filteredSessions.length} / ${sessions.length} 个会话`
+                  : `共 ${sessions.length} 个会话`}
+              </div>
+            )}
             <div className="thin-scrollbar max-h-64 overflow-y-auto">
-              {sessions.map((session) => (
+              {filteredSessions.length === 0 ? (
+                <p className="px-2 py-3 text-center text-[12px] text-muted-foreground">
+                  {sessions.length === 0 ? '还没有会话' : '没有匹配的会话'}
+                </p>
+              ) : (
+              filteredSessions.map((session) => (
                 <div
                   key={session.id}
                   className={`group/session flex items-center rounded-md pr-0.5 transition-colors ${
@@ -442,7 +500,8 @@ export function ChatPanel({
                     </button>
                   </div>
                 </div>
-              ))}
+              ))
+              )}
             </div>
           </PopoverContent>
         </Popover>
@@ -530,8 +589,13 @@ export function ChatPanel({
         </div>
       )}
 
-      {/* 消息列表 */}
-      <div className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      {/* 消息列表（外层 relative 承载「回到底部」悬浮按钮，内层滚动） */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={listRef}
+          onScroll={handleListScroll}
+          className="thin-scrollbar h-full space-y-4 overflow-y-auto px-3 py-4"
+        >
         {visibleMessages.length === 0 && !loading && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
             {searching ? (
@@ -706,7 +770,18 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        <div ref={bottomRef} />
+      </div>
+        {/* 用户向上翻阅历史时出现，点击回到底部并恢复跟随 */}
+        {showJumpButton && (
+          <button
+            className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[11.5px] text-foreground/80 shadow-md transition-colors hover:border-clay/50 hover:text-clay"
+            onClick={jumpToBottom}
+          >
+            <ArrowDown className="h-3 w-3" />
+            回到底部
+            {loading && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-clay" />}
+          </button>
+        )}
       </div>
 
       {/* 快捷指令 */}

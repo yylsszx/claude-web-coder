@@ -46,6 +46,8 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlo
       <div className="flex items-center gap-2 border-b border-border bg-secondary/60 px-3 py-1.5">
         <span className="font-mono text-[11px] text-muted-foreground">
           {language || 'code'}
+          <span className="mx-1.5 opacity-50">·</span>
+          {lines.length} 行
         </span>
         <div className="ml-auto flex items-center gap-1">
           <Button
