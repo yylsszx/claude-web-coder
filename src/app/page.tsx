@@ -587,7 +587,13 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault()
         setQuickOpen((prev) => !prev)
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.defaultPrevented &&
+        e.key.toLowerCase() === 'k'
+      ) {
+        // 编辑器内 Ctrl/⌘ + Shift + K 是 CodeMirror 删除当前行（handled 时已 preventDefault），
+        // 不再打开命令面板；编辑器内/外的 Ctrl/⌘ + K 仍开命令面板
         e.preventDefault()
         setCmdOpen((prev) => !prev)
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {

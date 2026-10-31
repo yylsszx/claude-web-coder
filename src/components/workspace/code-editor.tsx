@@ -12,8 +12,8 @@ import {
 import CodeMirror from '@uiw/react-codemirror'
 import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
-import type { ViewUpdate } from '@codemirror/view'
-import { EditorSelection } from '@codemirror/state'
+import type { Command, ViewUpdate } from '@codemirror/view'
+import { EditorSelection, Prec } from '@codemirror/state'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
@@ -96,6 +96,96 @@ export interface JumpTarget {
 
 /** 编辑器选中文本后可触发的 AI 快捷操作 */
 export type SelectionAction = 'explain' | 'optimize' | 'fix'
+
+/** 复制当前行 / 选区（Ctrl/⌘ + D）：副本插到原处下方，光标随行移动、选区随文本选中 */
+const duplicateSelection: Command = (view) => {
+  const { state } = view
+  const range = state.selection.main
+  if (!range.empty) {
+    // 有选区：复制选中文本插入到选区之后，并选中副本便于直接编辑
+    const text = state.sliceDoc(range.from, range.to)
+    view.dispatch({
+      changes: { from: range.to, insert: text },
+      selection: EditorSelection.range(range.to, range.to + text.length),
+    })
+    return true
+  }
+  // 无选区：复制整行（在行尾补换行 + 行文本，首末行同样成立），光标落到新行同列
+  const line = state.doc.lineAt(range.head)
+  const col = range.head - line.from
+  view.dispatch({
+    changes: { from: line.to, insert: '\n' + line.text },
+    selection: EditorSelection.cursor(line.to + 1 + Math.min(col, line.text.length)),
+  })
+  return true
+}
+
+/** 上移当前行 / 选区覆盖的行块（Alt + ↑）：与上一行整体交换，选区随行平移 */
+const moveLinesUp: Command = (view) => {
+  const { state } = view
+  const range = state.selection.main
+  const fromLine = state.doc.lineAt(range.from)
+  const toLine = state.doc.lineAt(range.to)
+  if (fromLine.number <= 1) return true // 已在首行，无上一行可换
+  const prevLine = state.doc.line(fromLine.number - 1)
+  const block = state.sliceDoc(fromLine.from, toLine.to)
+  const prevText = state.sliceDoc(prevLine.from, prevLine.to)
+  view.dispatch({
+    changes: { from: prevLine.from, to: toLine.to, insert: block + '\n' + prevText },
+    selection: EditorSelection.range(
+      prevLine.from + (range.from - fromLine.from),
+      prevLine.from + (range.to - fromLine.from)
+    ),
+  })
+  return true
+}
+
+/** 下移当前行 / 选区覆盖的行块（Alt + ↓）：与下一行整体交换，选区随行平移 */
+const moveLinesDown: Command = (view) => {
+  const { state } = view
+  const range = state.selection.main
+  const fromLine = state.doc.lineAt(range.from)
+  const toLine = state.doc.lineAt(range.to)
+  if (toLine.number >= state.doc.lines) return true // 已在末行，无下一行可换
+  const nextLine = state.doc.line(toLine.number + 1)
+  const block = state.sliceDoc(fromLine.from, toLine.to)
+  const nextText = state.sliceDoc(nextLine.from, nextLine.to)
+  // 下移后行块的新起点 = 原起点 + 下一行文本长度 + 换行符
+  const blockNewFrom = fromLine.from + nextText.length + 1
+  view.dispatch({
+    changes: { from: fromLine.from, to: nextLine.to, insert: nextText + '\n' + block },
+    selection: EditorSelection.range(
+      blockNewFrom + (range.from - fromLine.from),
+      blockNewFrom + (range.to - fromLine.from)
+    ),
+  })
+  return true
+}
+
+/** 删除当前行 / 选区覆盖的行块（Ctrl/⌘ + Shift + K）：整行连同换行符删除，可撤销 */
+const deleteLines: Command = (view) => {
+  const { state } = view
+  const range = state.selection.main
+  const fromLine = state.doc.lineAt(range.from)
+  const toLine = state.doc.lineAt(range.to)
+  if (toLine.number === state.doc.lines) {
+    // 末行没有尾随换行符：连同行前的换行符一起删，避免上方残留空行
+    const from =
+      fromLine.number > 1 ? state.doc.line(fromLine.number - 1).to : fromLine.from
+    view.dispatch({
+      changes: { from, to: toLine.to },
+      selection: EditorSelection.cursor(from),
+    })
+    return true
+  }
+  // 非末行：删到下一行开头，把行自身的换行符一并带走
+  const to = Math.min(toLine.to + 1, state.doc.length)
+  view.dispatch({
+    changes: { from: fromLine.from, to },
+    selection: EditorSelection.cursor(fromLine.from),
+  })
+  return true
+}
 
 /** 选中文本的上下文（发送给 AI） */
 export interface SelectionPayload {
@@ -623,7 +713,21 @@ export function CodeEditor({
   const wrapText = prefs.wrap
   const fontSize = prefs.font
   const extensions = useMemo<Extension[]>(() => {
-    const base: Extension[] = [search(), keymap.of(searchKeymap)]
+    // 自定义键位：Ctrl/⌘ + D 复制行/选区，Alt + ↑/↓ 上下移动行块，Ctrl/⌘ + Shift + K 删行。
+    // Prec.high 使其先于 basicSetup 内置 keymap：searchKeymap 的 Mod-d 是多光标 selectNextOccurrence，
+    // 不提升则 Ctrl+D 被它抢占（单光标时选中一个词并吞掉事件），复制行永远轮不到
+    const base: Extension[] = [
+      search(),
+      Prec.high(
+        keymap.of([
+          { key: 'Mod-d', run: duplicateSelection },
+          { key: 'Alt-ArrowUp', run: moveLinesUp },
+          { key: 'Alt-ArrowDown', run: moveLinesDown },
+          { key: 'Shift-Mod-k', run: deleteLines },
+        ]),
+      ),
+      keymap.of(searchKeymap),
+    ]
     if (wrapText) base.push(EditorView.lineWrapping)
     if (!language) return base
     const factory = LANGUAGE_EXTENSIONS[language]
@@ -759,6 +863,11 @@ export function CodeEditor({
                         e.preventDefault()
                         onCloseTab(tab.id)
                       }
+                    }}
+                    onDoubleClick={(e) => {
+                      // 双击标签任意位置关闭（单击切换 / 中键关闭 / 右键菜单均保留）
+                      e.preventDefault()
+                      onCloseTab(tab.id)
                     }}
                     className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-grab items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
                       isActive

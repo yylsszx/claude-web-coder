@@ -27,6 +27,9 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
       { keys: ['Ctrl/⌘', 'Shift', 'T'], desc: '重新打开最近关闭的标签页' },
       { keys: ['Ctrl/⌘', 'Shift', 'K'], desc: '删除当前行 / 选区覆盖的行（可撤销）' },
+      { keys: ['Ctrl/⌘', 'D'], desc: '复制当前行 / 选区（副本插到下方 / 选区之后并选中，可撤销）' },
+      { keys: ['Alt', '↑/↓'], desc: '上移 / 下移当前行或选区覆盖的行块' },
+      { keys: ['双击标签'], desc: '关闭该标签页（与中键点击等效）' },
     ],
   },
   {
