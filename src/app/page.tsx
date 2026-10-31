@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { Github, Sparkles, Loader2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -17,31 +17,31 @@ export default function WorkspacePage() {
   const { toast } = useToast()
   const isMobile = useIsMobile()
 
-  // ===== 状态 =====
+  // ===== 文件与标签页状态 =====
   const [files, setFiles] = useState<FileMeta[]>([])
-  const [activeFile, setActiveFile] = useState<FileFull | null>(null)
-  const [editorContent, setEditorContent] = useState('')
-  const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [openTabs, setOpenTabs] = useState<FileFull[]>([])
+  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const [tabStates, setTabStates] = useState<Record<string, SaveState>>({})
+
+  // ===== 聊天状态 =====
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [chatLoading, setChatLoading] = useState(false)
+  const [streamingId, setStreamingId] = useState<string | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
 
-  // 用 ref 保存最新编辑器内容，避免异步回调拿到旧值
-  const editorContentRef = useRef('')
-  editorContentRef.current = editorContent
+  const activeTab = useMemo(
+    () => openTabs.find((t) => t.id === activeTabId) ?? null,
+    [openTabs, activeTabId]
+  )
 
-  const activeFileRef = useRef<FileFull | null>(null)
-  activeFileRef.current = activeFile
+  // refs：异步回调中读取最新值
+  const openTabsRef = useRef(openTabs)
+  openTabsRef.current = openTabs
+  const activeTabRef = useRef(activeTab)
+  activeTabRef.current = activeTab
+  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // ===== 数据加载 =====
-  const refreshFiles = useCallback(async () => {
-    const res = await fetch('/api/files')
-    const data = await res.json()
-    if (res.ok) setFiles(data.files ?? [])
-  }, [])
-
+  // ===== 初始加载 =====
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -62,18 +62,20 @@ export default function WorkspacePage() {
     load()
     return () => {
       cancelled = true
+      // 卸载时清理所有自动保存定时器
+      Object.values(saveTimersRef.current).forEach(clearTimeout)
     }
   }, [])
 
   // ===== 保存 =====
-  const saveFile = useCallback(
-    async (contentOverride?: string) => {
-      const file = activeFileRef.current
-      if (!file) return
-      const content = contentOverride ?? editorContentRef.current
-      setSaveState('saving')
+  const saveTab = useCallback(
+    async (tabId: string, contentOverride?: string) => {
+      const tab = openTabsRef.current.find((t) => t.id === tabId)
+      if (!tab) return
+      const content = contentOverride ?? tab.content
+      setTabStates((prev) => ({ ...prev, [tabId]: 'saving' }))
       try {
-        const res = await fetch(`/api/files/${file.id}`, {
+        const res = await fetch(`/api/files/${tabId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content }),
@@ -82,10 +84,12 @@ export default function WorkspacePage() {
           const data = await res.json()
           throw new Error(data.error ?? '保存失败')
         }
-        setActiveFile((prev) => (prev && prev.id === file.id ? { ...prev, content } : prev))
-        setSaveState('saved')
+        setOpenTabs((prev) =>
+          prev.map((t) => (t.id === tabId ? { ...t, content } : t))
+        )
+        setTabStates((prev) => ({ ...prev, [tabId]: 'saved' }))
       } catch (error) {
-        setSaveState('dirty')
+        setTabStates((prev) => ({ ...prev, [tabId]: 'dirty' }))
         toast({
           title: '保存失败',
           description: error instanceof Error ? error.message : '请稍后重试',
@@ -96,45 +100,54 @@ export default function WorkspacePage() {
     [toast]
   )
 
-  const handleEditorChange = useCallback(
-    (value: string) => {
-      setEditorContent(value)
-      setSaveState('dirty')
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = setTimeout(() => void saveFile(value), 1000)
+  const scheduleSave = useCallback(
+    (tabId: string, content: string) => {
+      if (saveTimersRef.current[tabId]) clearTimeout(saveTimersRef.current[tabId])
+      saveTimersRef.current[tabId] = setTimeout(() => void saveTab(tabId, content), 1000)
     },
-    [saveFile]
+    [saveTab]
   )
 
-  // Ctrl/⌘ + S 手动保存
+  // Ctrl/⌘ + S 手动保存当前标签
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-        void saveFile()
+        const tab = activeTabRef.current
+        if (!tab) return
+        if (saveTimersRef.current[tab.id]) {
+          clearTimeout(saveTimersRef.current[tab.id])
+          delete saveTimersRef.current[tab.id]
+        }
+        void saveTab(tab.id)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveFile])
+  }, [saveTab])
 
   // ===== 文件操作 =====
+  const refreshFiles = useCallback(async () => {
+    const res = await fetch('/api/files')
+    const data = await res.json()
+    if (res.ok) setFiles(data.files ?? [])
+  }, [])
+
   const openFile = useCallback(
     async (id: string) => {
-      if (activeFileRef.current?.id === id) return
-      // 切换前先保存未保存的内容
-      if (saveState === 'dirty' && saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current)
-        await saveFile()
+      // 已打开 → 仅切换
+      if (openTabsRef.current.some((t) => t.id === id)) {
+        setActiveTabId(id)
+        return
       }
       try {
         const res = await fetch(`/api/files/${id}`)
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? '打开文件失败')
-        setActiveFile(data.file)
-        setEditorContent(data.file.content)
-        setSaveState('saved')
+        const file: FileFull = data.file
+        setOpenTabs((prev) => [...prev, file])
+        setTabStates((prev) => ({ ...prev, [file.id]: 'saved' }))
+        setActiveTabId(file.id)
       } catch (error) {
         toast({
           title: '打开文件失败',
@@ -143,7 +156,49 @@ export default function WorkspacePage() {
         })
       }
     },
-    [saveFile, saveState, toast]
+    [toast]
+  )
+
+  const closeTab = useCallback(
+    async (id: string) => {
+      const tab = openTabsRef.current.find((t) => t.id === id)
+      if (!tab) return
+      // 未保存则先保存
+      if (saveTimersRef.current[id]) {
+        clearTimeout(saveTimersRef.current[id])
+        delete saveTimersRef.current[id]
+      }
+      if (tabStates[id] === 'dirty') await saveTab(id)
+      setOpenTabs((prev) => {
+        const idx = prev.findIndex((t) => t.id === id)
+        const next = prev.filter((t) => t.id !== id)
+        // 若关闭的是激活标签，激活相邻标签
+        setActiveTabId((cur) => {
+          if (cur !== id) return cur
+          if (!next.length) return null
+          return next[Math.min(idx, next.length - 1)].id
+        })
+        return next
+      })
+      setTabStates((prev) => {
+        const { [id]: _removed, ...rest } = prev
+        return rest
+      })
+    },
+    [saveTab, tabStates]
+  )
+
+  const handleEditorChange = useCallback(
+    (value: string) => {
+      const tab = activeTabRef.current
+      if (!tab || tab.content === value) return
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.id === tab.id ? { ...t, content: value } : t))
+      )
+      setTabStates((prev) => ({ ...prev, [tab.id]: 'dirty' }))
+      scheduleSave(tab.id, value)
+    },
+    [scheduleSave]
   )
 
   const createFile = useCallback(
@@ -183,9 +238,13 @@ export default function WorkspacePage() {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? '重命名失败')
         await refreshFiles()
-        if (activeFileRef.current?.id === id) {
-          setActiveFile((prev) => (prev ? { ...prev, path: newPath } : prev))
-        }
+        setOpenTabs((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, path: newPath, language: data.file?.language ?? t.language }
+              : t
+          )
+        )
         toast({ title: '已重命名', description: newPath })
         return true
       } catch (error) {
@@ -208,10 +267,7 @@ export default function WorkspacePage() {
           const data = await res.json()
           throw new Error(data.error ?? '删除失败')
         }
-        if (activeFileRef.current?.id === id) {
-          setActiveFile(null)
-          setEditorContent('')
-        }
+        await closeTab(id)
         await refreshFiles()
         toast({ title: '文件已删除' })
       } catch (error) {
@@ -222,42 +278,103 @@ export default function WorkspacePage() {
         })
       }
     },
-    [refreshFiles, toast]
+    [closeTab, refreshFiles, toast]
   )
 
-  // ===== 聊天 =====
+  // ===== 聊天（流式） =====
   const sendMessage = useCallback(
     async (message: string) => {
-      const tempUser: ChatMsg = {
-        id: `tmp-${Date.now()}`,
-        role: 'user',
-        content: message,
-        createdAt: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, tempUser])
+      const tempUserId = `tmp-u-${Date.now()}`
+      const streamId = `tmp-a-${Date.now()}`
+      const now = new Date().toISOString()
+      setMessages((prev) => [
+        ...prev,
+        { id: tempUserId, role: 'user', content: message, createdAt: now },
+        { id: streamId, role: 'assistant', content: '', createdAt: now },
+      ])
       setChatLoading(true)
+      setStreamingId(streamId)
 
-      const file = activeFileRef.current
+      const tab = activeTabRef.current
+      let pending = ''
+      let flushTimer: ReturnType<typeof setTimeout> | null = null
+      const flush = () => {
+        flushTimer = null
+        if (!pending) return
+        const chunk = pending
+        pending = ''
+        setMessages((prev) =>
+          prev.map((m) => (m.id === streamId ? { ...m, content: m.content + chunk } : m))
+        )
+      }
+
       try {
-        const res = await fetch('/api/chat', {
+        const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message,
-            currentFile: file
-              ? { path: file.path, content: editorContentRef.current, language: file.language }
+            currentFile: tab
+              ? { path: tab.path, content: tab.content, language: tab.language }
               : null,
           }),
         })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error ?? 'AI 调用失败')
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== tempUser.id),
-          data.userMessage,
-          data.assistantMessage,
-        ])
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error ?? 'AI 调用失败')
+        }
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let errorMsg: string | null = null
+        let doneIds: { userMessageId: string; assistantMessageId: string } | null = null
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const parts = buffer.split('\n\n')
+          buffer = parts.pop() ?? ''
+          for (const part of parts) {
+            const line = part.trim()
+            if (!line.startsWith('data:')) continue
+            const frame = JSON.parse(line.slice(5).trim())
+            if (frame.t === 'delta') {
+              pending += frame.v
+              if (!flushTimer) flushTimer = setTimeout(flush, 60)
+            } else if (frame.t === 'done') {
+              doneIds = frame
+            } else if (frame.t === 'error') {
+              errorMsg = frame.v
+            }
+          }
+        }
+        if (flushTimer) {
+          clearTimeout(flushTimer)
+          flushTimer = null
+        }
+        flush()
+
+        if (errorMsg) throw new Error(errorMsg)
+        if (doneIds) {
+          const ids = doneIds
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === streamId
+                ? { ...m, id: ids.assistantMessageId }
+                : m.id === tempUserId
+                  ? { ...m, id: ids.userMessageId }
+                  : m
+            )
+          )
+        }
       } catch (error) {
-        setMessages((prev) => prev.filter((m) => m.id !== tempUser.id))
+        // 丢弃占位消息（含未完成的流式内容），提示错误
+        if (flushTimer) clearTimeout(flushTimer)
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== streamId && m.id !== tempUserId)
+        )
         toast({
           title: 'AI 调用失败',
           description: error instanceof Error ? error.message : '请稍后重试',
@@ -265,6 +382,7 @@ export default function WorkspacePage() {
         })
       } finally {
         setChatLoading(false)
+        setStreamingId(null)
       }
     },
     [toast]
@@ -285,26 +403,29 @@ export default function WorkspacePage() {
     }
   }, [toast])
 
-  /** 把 AI 代码块应用到当前文件 */
+  /** 把 AI 代码块应用到当前标签 */
   const applyCode = useCallback(
     (code: string) => {
-      setEditorContent(code)
-      setSaveState('dirty')
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = setTimeout(() => void saveFile(code), 1000)
+      const tab = activeTabRef.current
+      if (!tab) return
+      setOpenTabs((prev) =>
+        prev.map((t) => (t.id === tab.id ? { ...t, content: code } : t))
+      )
+      setTabStates((prev) => ({ ...prev, [tab.id]: 'dirty' }))
+      scheduleSave(tab.id, code)
       toast({
         title: '已应用到编辑器',
         description: '代码已写入当前文件，即将自动保存',
       })
     },
-    [saveFile, toast]
+    [scheduleSave, toast]
   )
 
   // ===== 视图 =====
   const fileTreeView = (
     <FileTree
       files={files}
-      activeId={activeFile?.id ?? null}
+      activeId={activeTabId}
       onOpen={openFile}
       onCreate={createFile}
       onRename={renameFile}
@@ -314,13 +435,20 @@ export default function WorkspacePage() {
 
   const editorView = (
     <CodeEditor
-      file={activeFile}
-      content={editorContent}
-      saveState={saveState}
+      tabs={openTabs}
+      activeId={activeTabId}
+      tabStates={tabStates}
+      onSwitchTab={setActiveTabId}
+      onCloseTab={closeTab}
       onChange={handleEditorChange}
       onSave={() => {
-        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-        void saveFile()
+        const tab = activeTabRef.current
+        if (!tab) return
+        if (saveTimersRef.current[tab.id]) {
+          clearTimeout(saveTimersRef.current[tab.id])
+          delete saveTimersRef.current[tab.id]
+        }
+        void saveTab(tab.id)
       }}
     />
   )
@@ -329,7 +457,8 @@ export default function WorkspacePage() {
     <ChatPanel
       messages={messages}
       loading={chatLoading}
-      activeFilePath={activeFile?.path ?? null}
+      streamingId={streamingId}
+      activeFilePath={activeTab?.path ?? null}
       onSend={sendMessage}
       onClear={clearChat}
       onApplyCode={applyCode}

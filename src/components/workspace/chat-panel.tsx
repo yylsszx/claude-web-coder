@@ -10,6 +10,7 @@ import type { ChatMsg } from '@/lib/types'
 interface ChatPanelProps {
   messages: ChatMsg[]
   loading: boolean
+  streamingId: string | null
   activeFilePath: string | null
   onSend: (message: string) => void
   onClear: () => void
@@ -25,6 +26,7 @@ const QUICK_ACTIONS = [
 export function ChatPanel({
   messages,
   loading,
+  streamingId,
   activeFilePath,
   onSend,
   onClear,
@@ -35,7 +37,7 @@ export function ChatPanel({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, loading])
+  }, [messages.length, loading, messages[messages.length - 1]?.content])
 
   const send = (text: string) => {
     const trimmed = text.trim()
@@ -43,6 +45,8 @@ export function ChatPanel({
     onSend(trimmed)
     setInput('')
   }
+
+  const isStreaming = (id: string) => id === streamingId
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -94,8 +98,12 @@ export function ChatPanel({
             >
               {msg.role === 'assistant' ? (
                 <AiMessage
-                  content={msg.content}
-                  onApplyCode={onApplyCode}
+                  content={
+                    isStreaming(msg.id)
+                      ? msg.content + (msg.content ? ' ▍' : '▍')
+                      : msg.content
+                  }
+                  onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
                   applyDisabled={!activeFilePath}
                 />
               ) : (
