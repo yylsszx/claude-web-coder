@@ -234,6 +234,22 @@ export function ChatPanel({
     return `${y}${t.getMonth() + 1}月${t.getDate()}日 ${hm}`
   }
 
+  /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 超过一个月显示日期 */
+  const formatRelativeTime = (iso: string) => {
+    const t = new Date(iso)
+    if (Number.isNaN(t.getTime())) return ''
+    const min = Math.floor((Date.now() - t.getTime()) / 60000)
+    if (min < 1) return '刚刚'
+    if (min < 60) return `${min} 分钟前`
+    const h = Math.floor(min / 60)
+    if (h < 24) return `${h} 小时前`
+    const d = Math.floor(h / 24)
+    if (d < 30) return `${d} 天前`
+    const now = new Date()
+    const y = t.getFullYear() === now.getFullYear() ? '' : `${t.getFullYear()}年`
+    return `${y}${t.getMonth() + 1}月${t.getDate()}日`
+  }
+
   /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件）；@ 引用随消息一并发出 */
   const send = (text: string, forceIncludeFile?: boolean) => {
     const trimmed = text.trim()
@@ -427,13 +443,20 @@ export function ChatPanel({
           <PopoverTrigger asChild>
             <button
               className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent"
-              title="切换会话"
+              title="切换会话（双击快速重命名）"
+              onDoubleClick={() => {
+                if (!activeSession || loading) return
+                setRenameTarget(activeSession)
+                setRenameTitle(activeSession.title)
+              }}
             >
               <span className="font-claude-serif truncate text-[14px] font-semibold">
                 {activeSession?.title ?? '选择会话'}
               </span>
               <span className="shrink-0 text-[10px] text-muted-foreground">
-                {activeSession ? `${activeSession.messageCount} 条` : ''}
+                {activeSession && mounted
+                  ? `${formatRelativeTime(activeSession.updatedAt)} · ${activeSession.messageCount} 条`
+                  : ''}
               </span>
             </button>
           </PopoverTrigger>
@@ -497,7 +520,7 @@ export function ChatPanel({
                       {session.title}
                     </span>
                     <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                      {session.messageCount} 条
+                      {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
                     </span>
                   </button>
                   <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/session:opacity-100">
@@ -877,14 +900,14 @@ export function ChatPanel({
               <div className="border-b border-border/60 px-2.5 py-1 text-[10.5px] text-muted-foreground">
                 引用文件作为 AI 上下文（↑↓ 选择 · Enter 确认 · Esc 关闭）
               </div>
-              <div className="thin-scrollbar max-h-52 overflow-y-auto p-1">
+              <div className="thin-scrollbar max-h-[min(13rem,32vh)] overflow-y-auto p-1">
                 {mentionMatches.length === 0 ? (
                   <p className="px-2 py-2 text-[12px] text-muted-foreground">没有匹配的文件</p>
                 ) : (
                   mentionMatches.map((f, i) => (
                     <button
                       key={f.id}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12.5px] transition-colors md:py-1.5 ${
                         i === mentionIndex ? 'bg-clay/10 text-clay' : 'text-foreground/85 hover:bg-accent'
                       }`}
                       onMouseDown={(e) => {
