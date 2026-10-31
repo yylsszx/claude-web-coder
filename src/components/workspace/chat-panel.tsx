@@ -500,6 +500,53 @@ export function ChatPanel({
       }
       return
     }
+    if (e.key === 'Tab' && !e.nativeEvent.isComposing && !mentionOpen) {
+      e.preventDefault()
+      const el = textareaRef.current
+      if (!el) return
+      const value = el.value
+      const start = el.selectionStart ?? 0
+      const end = el.selectionEnd ?? 0
+      let next: string
+      let selStart: number
+      let selEnd: number
+      if (start === end && !e.shiftKey) {
+        // 无选区 Tab：光标处插入两个空格
+        next = value.slice(0, start) + '  ' + value.slice(end)
+        selStart = selEnd = start + 2
+      } else {
+        // 有选区（或 Shift+Tab）：选区覆盖的行整体缩进 / 反缩进
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1
+        let lineEnd = value.indexOf('\n', end)
+        if (lineEnd === -1) lineEnd = value.length
+        const block = value.slice(lineStart, lineEnd)
+        const lines = block.split('\n')
+        const firstLine = lines[0] ?? ''
+        if (e.shiftKey) {
+          // 反缩进：每行行首删除至多 2 个空格或 1 个制表符
+          const stripped = lines.map((l) => l.replace(/^(\t| {1,2})/, ''))
+          next = value.slice(0, lineStart) + stripped.join('\n') + value.slice(lineEnd)
+          const removedFirst = firstLine.length - (stripped[0] ?? '').length
+          // 反缩进后选区塌缩到原起点平移后的位置（多数编辑器同款行为）
+          selStart = selEnd = Math.max(lineStart, start - removedFirst)
+        } else {
+          // 缩进：非空行行首加两个空格
+          const indented = lines.map((l) => (l.trim() ? '  ' + l : l))
+          next = value.slice(0, lineStart) + indented.join('\n') + value.slice(lineEnd)
+          const delta = next.length - value.length
+          selStart = start + (firstLine.trim() ? 2 : 0)
+          selEnd = end + delta
+        }
+      }
+      setInput(next)
+      persistDraft(next)
+      requestAnimationFrame(() => {
+        const t = textareaRef.current
+        if (!t) return
+        t.setSelectionRange(selStart, selEnd)
+      })
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       send(input)
@@ -1017,6 +1064,14 @@ export function ChatPanel({
                 >
                   {mounted ? formatMsgTime(msg.createdAt) : ''}
                 </span>
+                {typeof msg.durationMs === 'number' && (
+                  <span
+                    className="mr-1 shrink-0 text-[10.5px] text-muted-foreground/60"
+                    title="本次生成耗时"
+                  >
+                    · {(msg.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
                   onClick={() => void copyMessage(msg)}

@@ -674,6 +674,7 @@ export default function WorkspacePage() {
       const { message, regenerate, editMessageId, includeFile = true, mentionIds } = opts
       // 防止并发请求：已有流式请求进行中时忽略
       if (abortRef.current) return
+      const startedAt = Date.now()
       const tempUserId = `tmp-u-${Date.now()}`
       const streamId = `tmp-a-${Date.now()}`
       const now = new Date().toISOString()
@@ -813,7 +814,7 @@ export default function WorkspacePage() {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === streamId
-                ? { ...m, id: ids.assistantMessageId }
+                ? { ...m, id: ids.assistantMessageId, durationMs: Date.now() - startedAt }
                 : m.id === tempUserId
                   ? { ...m, id: ids.userMessageId }
                   : m

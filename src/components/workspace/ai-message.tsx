@@ -422,6 +422,19 @@ export const AiMessage = memo(function AiMessage({
                   />
                 );
               },
+              /** 链接一律新窗口打开，避免点击后整页跳走丢失工作台状态 */
+              a({ children, href }) {
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-clay underline decoration-clay/40 underline-offset-2 transition-colors hover:decoration-clay"
+                  >
+                    {children}
+                  </a>
+                );
+              },
               code(props) {
                 const { className, children } = props;
                 const match = /language-([\w-]+)/.exec(className ?? "");
