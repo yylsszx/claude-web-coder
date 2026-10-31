@@ -1,0 +1,237 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-claude-serif);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-clay: var(--clay);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/*
+ * Claude 风格主题（参考 Claude 官网）：
+ * 米白奶油底色 + terracotta 陶土橙点缀 + 深炭色文字 + 柔和边框
+ */
+:root {
+  --radius: 0.75rem;
+  --background: #faf9f5;
+  --foreground: #1f1e1d;
+  --card: #ffffff;
+  --card-foreground: #1f1e1d;
+  --popover: #ffffff;
+  --popover-foreground: #1f1e1d;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --secondary: #f0eee6;
+  --secondary-foreground: #3d3929;
+  --muted: #f0eee6;
+  --muted-foreground: #83827d;
+  --accent: #f0eee6;
+  --accent-foreground: #3d3929;
+  --destructive: #c2410c;
+  --border: #e8e5da;
+  --input: #e8e5da;
+  --ring: #d97757;
+  --chart-1: #d97757;
+  --chart-2: #6a9b7e;
+  --chart-3: #b0904f;
+  --chart-4: #7d8bae;
+  --chart-5: #a86e6e;
+  --sidebar: #f0eee6;
+  --sidebar-foreground: #1f1e1d;
+  --sidebar-primary: #d97757;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8e5da;
+  --sidebar-accent-foreground: #3d3929;
+  --sidebar-border: #e8e5da;
+  --sidebar-ring: #d97757;
+  --clay: #d97757;
+}
+
+.dark {
+  --background: #262624;
+  --foreground: #faf9f5;
+  --card: #30302e;
+  --card-foreground: #faf9f5;
+  --popover: #30302e;
+  --popover-foreground: #faf9f5;
+  --primary: #d97757;
+  --primary-foreground: #ffffff;
+  --secondary: #3a3a37;
+  --secondary-foreground: #faf9f5;
+  --muted: #3a3a37;
+  --muted-foreground: #a3a29c;
+  --accent: #3a3a37;
+  --accent-foreground: #faf9f5;
+  --destructive: #e07a5f;
+  --border: #43433f;
+  --input: #43433f;
+  --ring: #d97757;
+  --chart-1: #d97757;
+  --chart-2: #6a9b7e;
+  --chart-3: #b0904f;
+  --chart-4: #7d8bae;
+  --chart-5: #a86e6e;
+  --sidebar: #30302e;
+  --sidebar-foreground: #faf9f5;
+  --sidebar-primary: #d97757;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #3a3a37;
+  --sidebar-accent-foreground: #faf9f5;
+  --sidebar-border: #43433f;
+  --sidebar-ring: #d97757;
+  --clay: #d97757;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ===== 工作台自定义样式 ===== */
+
+/* 衬线标题字体（Claude 风格） */
+.font-claude-serif {
+  font-family: Georgia, "Times New Roman", "Noto Serif SC", "Songti SC", serif;
+}
+
+/* 自定义滚动条 */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #d8d5c9;
+  border-radius: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #c4c1b4;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* CodeMirror 与奶油色主题融合 */
+.cm-editor {
+  background: transparent !important;
+  font-size: 13.5px;
+}
+.cm-editor.cm-focused {
+  outline: none !important;
+}
+.cm-gutters {
+  background: transparent !important;
+  border-right: 1px solid var(--border) !important;
+  color: #a6a294 !important;
+}
+.cm-activeLine {
+  background: rgba(217, 119, 87, 0.06) !important;
+}
+.cm-activeLineGutter {
+  background: rgba(217, 119, 87, 0.1) !important;
+  color: #d97757 !important;
+}
+
+/* AI 回复中的 Markdown 样式 */
+.ai-markdown {
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.ai-markdown p {
+  margin: 0.4em 0;
+}
+.ai-markdown ul,
+.ai-markdown ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.ai-markdown ul {
+  list-style: disc;
+}
+.ai-markdown ol {
+  list-style: decimal;
+}
+.ai-markdown li {
+  margin: 0.15em 0;
+}
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4 {
+  font-weight: 600;
+  margin: 0.7em 0 0.3em;
+}
+.ai-markdown h1 { font-size: 1.15em; }
+.ai-markdown h2 { font-size: 1.1em; }
+.ai-markdown h3 { font-size: 1.05em; }
+.ai-markdown code:not(pre code) {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.88em;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.ai-markdown blockquote {
+  border-left: 3px solid var(--clay);
+  padding-left: 0.8em;
+  margin: 0.5em 0;
+  color: var(--muted-foreground);
+}
+.ai-markdown a {
+  color: var(--clay);
+  text-decoration: underline;
+}
+.ai-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+.ai-markdown th,
+.ai-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.6em;
+  font-size: 0.95em;
+}

@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 工作区文件（虚拟项目文件树）
+model ProjectFile {
+  id        String   @id @default(cuid())
+  path      String   @unique // 相对路径，如 "src/utils/helpers.ts"
+  content   String   @default("")
+  language  String   @default("plaintext")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// AI 对话消息
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}
