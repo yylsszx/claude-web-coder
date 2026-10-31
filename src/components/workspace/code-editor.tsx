@@ -123,6 +123,8 @@ interface CodeEditorProps {
   onCloseRightTabs: (id: string) => void
   /** 右键菜单：关闭全部标签 */
   onCloseAllTabs: () => void
+  /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
+  onReorderTabs: (fromId: string, toId: string) => void
   onChange: (value: string) => void
   onSave: () => void
   jumpTarget?: JumpTarget | null
@@ -143,6 +145,7 @@ export function CodeEditor({
   onCloseOtherTabs,
   onCloseRightTabs,
   onCloseAllTabs,
+  onReorderTabs,
   onChange,
   onSave,
   jumpTarget,
@@ -157,6 +160,10 @@ export function CodeEditor({
   const [selState, setSelState] = useState<SelState | null>(null)
   const [mdView, setMdView] = useState<MdViewMode>('edit')
   const [cursorInfo, setCursorInfo] = useState<CursorInfo | null>(null)
+  // 标签页拖拽排序：拖拽中的标签 id（ref 供事件逻辑同步读取）+ 悬停目标（高亮反馈）
+  const dragTabIdRef = useRef<string | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   const file = useMemo(
     () => tabs.find((t) => t.id === activeId) ?? null,
@@ -369,10 +376,43 @@ export function CodeEditor({
               <ContextMenu key={tab.id}>
                 <ContextMenuTrigger asChild>
                   <div
-                    className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
+                    draggable
+                    onDragStart={(e) => {
+                      dragTabIdRef.current = tab.id
+                      setDraggingId(tab.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', tab.id)
+                    }}
+                    onDragOver={(e) => {
+                      if (!dragTabIdRef.current || dragTabIdRef.current === tab.id) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      if (dropTargetId !== tab.id) setDropTargetId(tab.id)
+                    }}
+                    onDragLeave={() => {
+                      if (dropTargetId === tab.id) setDropTargetId(null)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      const from = dragTabIdRef.current
+                      dragTabIdRef.current = null
+                      setDraggingId(null)
+                      setDropTargetId(null)
+                      if (from && from !== tab.id) onReorderTabs(from, tab.id)
+                    }}
+                    onDragEnd={() => {
+                      dragTabIdRef.current = null
+                      setDraggingId(null)
+                      setDropTargetId(null)
+                    }}
+                    className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-grab items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
                       isActive
                         ? 'border-border bg-card font-medium text-foreground'
                         : 'border-transparent text-muted-foreground hover:bg-card/60'
+                    } ${draggingId === tab.id ? 'opacity-40' : ''} ${
+                      dropTargetId === tab.id && draggingId && draggingId !== tab.id
+                        ? 'ring-1 ring-inset ring-clay/60'
+                        : ''
                     }`}
                   >
                     <button

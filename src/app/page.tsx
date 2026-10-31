@@ -417,6 +417,20 @@ export default function WorkspacePage() {
     }
   }, [closeTab])
 
+  /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
+  const reorderTabs = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return
+    setOpenTabs((prev) => {
+      const from = prev.findIndex((t) => t.id === fromId)
+      const to = prev.findIndex((t) => t.id === toId)
+      if (from < 0 || to < 0) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }, [])
+
   const handleEditorChange = useCallback(
     (value: string) => {
       const tab = activeTabRef.current
@@ -1098,6 +1112,7 @@ export default function WorkspacePage() {
       onCloseOtherTabs={closeOtherTabs}
       onCloseRightTabs={closeRightTabs}
       onCloseAllTabs={closeAllTabs}
+      onReorderTabs={reorderTabs}
       onChange={handleEditorChange}
       jumpTarget={jumpTarget}
       onAskSelection={askAboutSelection}

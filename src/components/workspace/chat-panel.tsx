@@ -480,6 +480,9 @@ export function ChatPanel({
               <span className="font-claude-serif truncate text-[14px] font-semibold">
                 {activeSession?.title ?? '选择会话'}
               </span>
+              {activeSession?.pinned && (
+                <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
+              )}
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 {activeSession && mounted
                   ? `${formatRelativeTime(activeSession.updatedAt)} · ${activeSession.messageCount} 条`
