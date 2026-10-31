@@ -14,6 +14,7 @@ import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import type { ViewUpdate } from '@codemirror/view'
+import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -33,6 +34,8 @@ import {
   Pencil,
   PencilLine,
   Plus,
+  Redo2,
+  Undo2,
   Save,
   Sparkles,
   SquarePen,
@@ -113,6 +116,13 @@ interface CursorInfo {
   selLines: number
   selChars: number
   totalChars: number
+}
+
+/** 每个标签的记忆快照：光标选区（doc 偏移）+ 滚动位置，切换标签时恢复 */
+interface TabEditorState {
+  anchor: number
+  head: number
+  top: number
 }
 
 type MdViewMode = 'edit' | 'split' | 'preview'
@@ -231,6 +241,12 @@ export function CodeEditor({
   const [selState, setSelState] = useState<SelState | null>(null)
   const [mdView, setMdView] = useState<MdViewMode>('edit')
   const [cursorInfo, setCursorInfo] = useState<CursorInfo | null>(null)
+  // 标签切换记忆：光标选区 + 滚动位置（会话级内存，关闭后重开同文件仍可恢复）
+  const tabStatesRef = useRef(new Map<string, TabEditorState>())
+  // 撤销 / 重做可用性（undoDepth/redoDepth 驱动按钮禁用态）
+  const [histState, setHistState] = useState({ undo: 0, redo: 0 })
+  // 当前文件 id 的 ref（handleUpdate / onScrollCapture 闭包中读取，避免陈旧闭包）
+  const fileIdRef = useRef<string | null>(null)
   // 标签页拖拽排序：拖拽中的标签 id（ref 供事件逻辑同步读取）+ 悬停目标（高亮反馈）
   const dragTabIdRef = useRef<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -249,6 +265,26 @@ export function CodeEditor({
     () => tabs.find((t) => t.id === activeId) ?? null,
     [tabs, activeId]
   )
+  // 同步当前文件 id 到 ref（渲染期禁止写 ref，改在 effect 中更新；事件回调中读取避免陈旧闭包）
+  useEffect(() => {
+    fileIdRef.current = file?.id ?? null
+  }, [file?.id])
+
+  /** 把当前视图的选区并入指定文件的快照（滚动位置另行记录） */
+  const rememberSelection = useCallback((fileId: string, view: EditorView) => {
+    const sel = view.state.selection.main
+    const prev = tabStatesRef.current.get(fileId)
+    if (prev) {
+      prev.anchor = sel.anchor
+      prev.head = sel.head
+    } else {
+      tabStatesRef.current.set(fileId, {
+        anchor: sel.anchor,
+        head: sel.head,
+        top: view.scrollDOM.scrollTop,
+      })
+    }
+  }, [])
 
   // 切换文件时重置选区工具条与 Markdown 视图（渲染期状态调整，避免 effect 级联渲染）
   const [lastFileId, setLastFileId] = useState<string | null>(file?.id ?? null)
@@ -309,12 +345,20 @@ export function CodeEditor({
     )
   }, [])
 
-  // 跟踪编辑器选区：非空选区时记录文本、行号与浮动工具条坐标
+  // 跟踪编辑器选区：非空选区时记录文本、行号与浮动工具条坐标；同步撤销/重做可用性与标签记忆
   const handleUpdate = useCallback(
     (vu: ViewUpdate) => {
       if (!vu.selectionSet && !vu.docChanged) return
       const view = vu.view
       syncCursor(view)
+      // 记录光标选区到当前文件的快照（切换标签后恢复）
+      if (fileIdRef.current) rememberSelection(fileIdRef.current, view)
+      // 同步撤销 / 重做按钮禁用态
+      const uDepth = undoDepth(vu.state)
+      const rDepth = redoDepth(vu.state)
+      setHistState((prev) =>
+        prev.undo === uDepth && prev.redo === rDepth ? prev : { undo: uDepth, redo: rDepth }
+      )
       const range = view.state.selection.main
       if (range.empty) {
         setSelState((prev) => (prev ? null : prev))
@@ -350,8 +394,21 @@ export function CodeEditor({
         return next
       })
     },
-    [syncCursor]
+    [syncCursor, rememberSelection]
   )
+
+  /** 撤销 / 重做：预览模式下视图已卸载，静默忽略 */
+  const runHistory = useCallback((kind: 'undo' | 'redo') => {
+    const view = editorViewRef.current
+    if (!view) return
+    try {
+      if (kind === 'undo') undo(view)
+      else redo(view)
+      view.focus()
+    } catch {
+      /* 视图已销毁时忽略 */
+    }
+  }, [])
 
   const askSelection = useCallback(
     (action: SelectionAction) => {
@@ -560,6 +617,29 @@ export function CodeEditor({
         <Badge variant="secondary" className="shrink-0 text-[11px]">
           {LANGUAGE_LABELS[file.language] ?? file.language}
         </Badge>
+        {/* 撤销 / 重做（undoDepth/redoDepth 驱动禁用态） */}
+        <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
+          <button
+            type="button"
+            onClick={() => runHistory('undo')}
+            disabled={histState.undo === 0}
+            title="撤销（Ctrl/⌘ + Z）"
+            aria-label="撤销"
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Undo2 className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={() => runHistory('redo')}
+            disabled={histState.redo === 0}
+            title="重做（Ctrl/⌘ + Shift + Z）"
+            aria-label="重做"
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Redo2 className="h-3 w-3" />
+          </button>
+        </div>
         {/* 显示偏好：字号调节 + 自动换行开关 */}
         <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
           <button
@@ -665,6 +745,23 @@ export function CodeEditor({
               showPreview ? 'flex-1 overflow-hidden' : 'h-full flex-1 overflow-auto'
             }`}
             style={{ '--cm-font-size': `${fontSize}px` } as CSSProperties}
+            onScrollCapture={(e) => {
+              // CodeMirror 滚动容器滚动时记录滚动位置到当前文件快照（切换标签后恢复视口）
+              const el = e.target as HTMLElement
+              const fid = fileIdRef.current
+              if (!fid || !el.classList?.contains('cm-scroller')) return
+              const prev = tabStatesRef.current.get(fid)
+              if (prev) prev.top = el.scrollTop
+              else {
+                const view = editorViewRef.current
+                const sel = view?.state.selection.main
+                tabStatesRef.current.set(fid, {
+                  anchor: sel?.anchor ?? 0,
+                  head: sel?.head ?? 0,
+                  top: el.scrollTop,
+                })
+              }
+            }}
           >
             <CodeMirror
               key={file.id}
@@ -678,6 +775,36 @@ export function CodeEditor({
               onCreateEditor={(view) => {
                 editorViewRef.current = view
                 syncCursor(view)
+                // 恢复该文件上次的光标与滚动位置（doc 可能已变化，位置夹到文档末尾）
+                const saved = tabStatesRef.current.get(file.id)
+                if (saved) {
+                  const len = view.state.doc.length
+                  try {
+                    view.dispatch({
+                      selection: EditorSelection.range(
+                        Math.min(saved.anchor, len),
+                        Math.min(saved.head, len)
+                      ),
+                    })
+                  } catch {
+                    /* 选区无效时忽略 */
+                  }
+                  requestAnimationFrame(() => {
+                    try {
+                      view.scrollDOM.scrollTop = saved.top
+                    } catch {
+                      /* 视图已销毁时忽略 */
+                    }
+                  })
+                  if (fileIdRef.current) rememberSelection(fileIdRef.current, view)
+                }
+                const uDepth = undoDepth(view.state)
+                const rDepth = redoDepth(view.state)
+                setHistState((prev) =>
+                  prev.undo === uDepth && prev.redo === rDepth
+                    ? prev
+                    : { undo: uDepth, redo: rDepth }
+                )
               }}
               basicSetup={{
                 lineNumbers: true,

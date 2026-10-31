@@ -106,6 +106,33 @@ const STARTER_PROMPTS = [
   },
 ]
 
+/** 输入历史的 localStorage 键前缀（按会话隔离，与草稿同套机制） */
+const HIST_KEY_PREFIX = 'cw-chat-hist-'
+
+/** 读取某会话的输入历史（损坏 / 非数组数据当作空历史，截留最近 50 条） */
+const readInputHistory = (sid: string | null): string[] => {
+  if (!sid) return []
+  try {
+    const raw = localStorage.getItem(HIST_KEY_PREFIX + sid)
+    const arr: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr)
+      ? arr.filter((x): x is string => typeof x === 'string').slice(-50)
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** 写入某会话的输入历史（仅保留最近 50 条，存储不可用时静默） */
+const writeInputHistory = (sid: string | null, hist: string[]) => {
+  if (!sid) return
+  try {
+    localStorage.setItem(HIST_KEY_PREFIX + sid, JSON.stringify(hist.slice(-50)))
+  } catch {
+    /* 存储不可用时静默 */
+  }
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -136,6 +163,11 @@ export function ChatPanel({
   const stickToBottomRef = useRef(true)
   const [showJumpButton, setShowJumpButton] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // 输入历史回溯：发送过的消息按序记录，空输入时 ↑ 取上一条 / ↓ 向新方向前进；按会话持久化
+  const inputHistoryRef = useRef<string[]>([])
+  const histIndexRef = useRef<number | null>(null)
+  // 回溯前的原草稿（↓ 走到末尾时恢复；仅空输入可触发回溯，故初始为空串）
+  const histDraftRef = useRef('')
   const panelRef = useRef<HTMLDivElement | null>(null)
   // 时间戳等依赖客户端时钟/时区的内容仅在挂载后渲染，避免 SSR hydration mismatch
   const mounted = useMounted()
@@ -200,6 +232,9 @@ export function ChatPanel({
       /* 存储不可用时用空草稿 */
     }
     setInput(restored)
+    // 同步恢复该会话的输入历史，退出回溯浏览态
+    inputHistoryRef.current = readInputHistory(activeSessionId)
+    histIndexRef.current = null
   }
 
   // 首次挂载恢复当前会话草稿：ChatPanel 在数据就绪后才挂载（initialLoading 期间不渲染），
@@ -214,6 +249,8 @@ export function ChatPanel({
       /* 存储不可用时忽略 */
     }
     if (draft) setInput(draft)
+    // 挂载时恢复当前会话的输入历史
+    inputHistoryRef.current = readInputHistory(activeSessionId)
     // 仅挂载时执行一次（activeSessionId 取挂载时刻的最终值）
   }, [])
 
@@ -317,6 +354,13 @@ export function ChatPanel({
       forceIncludeFile ?? (fileAttached && !!activeFilePath),
       mentions.length ? mentions.map((m) => m.id) : undefined
     )
+    // 记录到输入历史（去重连续重复；上限 50 条）并按会话持久化，回溯游标复位
+    const hist = inputHistoryRef.current
+    if (hist[hist.length - 1] !== trimmed) hist.push(trimmed)
+    if (hist.length > 50) hist.shift()
+    histIndexRef.current = null
+    histDraftRef.current = ''
+    writeInputHistory(activeSessionId, hist)
     setInput('')
     try {
       if (activeSessionId) localStorage.removeItem(`cw-chat-draft-${activeSessionId}`)
@@ -391,6 +435,15 @@ export function ChatPanel({
     })
   }
 
+  /** 历史条目填入输入框：把光标移到末尾（不写草稿存储，避免覆盖用户已输入的草稿） */
+  const applyHistEntry = (text: string) => {
+    setInput(text)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) el.setSelectionRange(el.value.length, el.value.length)
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // @ 下拉打开时优先处理候选导航
     if (mentionOpen && mentionMatches.length > 0) {
@@ -414,6 +467,37 @@ export function ChatPanel({
         setMentionOpen(false)
         return
       }
+    }
+    // 输入历史回溯：空输入时 ↑ 进入浏览，浏览中可连续 ↑/↓ 翻阅（终端式）；非浏览态不干扰多行光标移动
+    if (
+      e.key === 'ArrowUp' &&
+      (!input || histIndexRef.current !== null) &&
+      !e.nativeEvent.isComposing &&
+      inputHistoryRef.current.length > 0
+    ) {
+      e.preventDefault()
+      const hist = inputHistoryRef.current
+      const idx =
+        histIndexRef.current === null
+          ? hist.length - 1
+          : Math.max(0, histIndexRef.current - 1)
+      histIndexRef.current = idx
+      applyHistEntry(hist[idx])
+      return
+    }
+    if (e.key === 'ArrowDown' && histIndexRef.current !== null && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      const hist = inputHistoryRef.current
+      const idx = histIndexRef.current + 1
+      if (idx >= hist.length) {
+        // 走到末尾：恢复回溯前的原草稿
+        histIndexRef.current = null
+        applyHistEntry(histDraftRef.current)
+      } else {
+        histIndexRef.current = idx
+        applyHistEntry(hist[idx])
+      }
+      return
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()

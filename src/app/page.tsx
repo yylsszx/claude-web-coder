@@ -220,9 +220,10 @@ export default function WorkspacePage() {
           const data = await res.json()
           throw new Error(data.error ?? '删除失败')
         }
-        // 同步清理该会话的输入草稿，避免 localStorage 孤儿键
+        // 同步清理该会话的输入草稿与输入历史，避免 localStorage 孤儿键
         try {
           localStorage.removeItem(`cw-chat-draft-${id}`)
+          localStorage.removeItem(`cw-chat-hist-${id}`)
         } catch {
           /* 忽略 */
         }
