@@ -29,6 +29,12 @@ import {
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
 import type { FileFull } from '@/lib/types'
 
@@ -111,6 +117,12 @@ interface CodeEditorProps {
   tabStates: Record<string, SaveState>
   onSwitchTab: (id: string) => void
   onCloseTab: (id: string) => void
+  /** 右键菜单：关闭其他标签（保留指定标签） */
+  onCloseOtherTabs: (id: string) => void
+  /** 右键菜单：关闭指定标签右侧的所有标签 */
+  onCloseRightTabs: (id: string) => void
+  /** 右键菜单：关闭全部标签 */
+  onCloseAllTabs: () => void
   onChange: (value: string) => void
   onSave: () => void
   jumpTarget?: JumpTarget | null
@@ -128,6 +140,9 @@ export function CodeEditor({
   tabStates,
   onSwitchTab,
   onCloseTab,
+  onCloseOtherTabs,
+  onCloseRightTabs,
+  onCloseAllTabs,
   onChange,
   onSave,
   jumpTarget,
@@ -346,39 +361,64 @@ export function CodeEditor({
       {/* 标签栏 */}
       {tabs.length > 0 && (
         <div className="thin-scrollbar flex h-9 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border bg-secondary/50 px-1.5 pt-1.5">
-          {tabs.map((tab) => {
+          {tabs.map((tab, idx) => {
             const isActive = tab.id === activeId
             const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
+            const isLast = idx === tabs.length - 1
             return (
-              <div
-                key={tab.id}
-                className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
-                  isActive
-                    ? 'border-border bg-card font-medium text-foreground'
-                    : 'border-transparent text-muted-foreground hover:bg-card/60'
-                }`}
-              >
-                <button
-                  className="min-w-0 flex-1 truncate py-1.5 text-left"
-                  onClick={() => onSwitchTab(tab.id)}
-                  title={tab.path}
-                >
-                  {tab.path.split('/').pop()}
-                </button>
-                {isDirty && (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay" title="未保存" />
-                )}
-                <button
-                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-accent group-hover/tab:opacity-100 focus:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onCloseTab(tab.id)
-                  }}
-                  aria-label={`关闭 ${tab.path}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
+              <ContextMenu key={tab.id}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
+                      isActive
+                        ? 'border-border bg-card font-medium text-foreground'
+                        : 'border-transparent text-muted-foreground hover:bg-card/60'
+                    }`}
+                  >
+                    <button
+                      className="min-w-0 flex-1 truncate py-1.5 text-left"
+                      onClick={() => onSwitchTab(tab.id)}
+                      title={tab.path}
+                    >
+                      {tab.path.split('/').pop()}
+                    </button>
+                    {isDirty && (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay" title="未保存" />
+                    )}
+                    <button
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-accent group-hover/tab:opacity-100 focus:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onCloseTab(tab.id)
+                      }}
+                      aria-label={`关闭 ${tab.path}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-44">
+                  <ContextMenuItem
+                    disabled={tabs.length <= 1}
+                    onSelect={() => onCloseOtherTabs(tab.id)}
+                  >
+                    关闭其他标签
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={isLast}
+                    onSelect={() => onCloseRightTabs(tab.id)}
+                  >
+                    关闭右侧标签
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={tabs.length === 0}
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => onCloseAllTabs()}
+                  >
+                    关闭全部标签
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             )
           })}
         </div>

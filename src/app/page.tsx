@@ -355,6 +355,38 @@ export default function WorkspacePage() {
     [saveTab, tabStates]
   )
 
+  /** 右键菜单：关闭除指定标签外的所有标签（未保存的先自动保存） */
+  const closeOtherTabs = useCallback(
+    async (id: string) => {
+      const snapshot = openTabsRef.current.map((t) => t.id)
+      for (const tid of snapshot) {
+        if (tid !== id) await closeTab(tid)
+      }
+    },
+    [closeTab]
+  )
+
+  /** 右键菜单：关闭指定标签右侧的所有标签 */
+  const closeRightTabs = useCallback(
+    async (id: string) => {
+      const idx = openTabsRef.current.findIndex((t) => t.id === id)
+      if (idx < 0) return
+      const rightIds = openTabsRef.current.slice(idx + 1).map((t) => t.id)
+      for (const tid of rightIds) {
+        await closeTab(tid)
+      }
+    },
+    [closeTab]
+  )
+
+  /** 右键菜单：关闭全部标签 */
+  const closeAllTabs = useCallback(async () => {
+    const snapshot = openTabsRef.current.map((t) => t.id)
+    for (const tid of snapshot) {
+      await closeTab(tid)
+    }
+  }, [closeTab])
+
   const handleEditorChange = useCallback(
     (value: string) => {
       const tab = activeTabRef.current
@@ -1033,6 +1065,9 @@ export default function WorkspacePage() {
       tabStates={tabStates}
       onSwitchTab={setActiveTabId}
       onCloseTab={closeTab}
+      onCloseOtherTabs={closeOtherTabs}
+      onCloseRightTabs={closeRightTabs}
+      onCloseAllTabs={closeAllTabs}
       onChange={handleEditorChange}
       jumpTarget={jumpTarget}
       onAskSelection={askAboutSelection}
