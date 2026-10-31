@@ -1086,7 +1086,11 @@ export function ChatPanel({
                         aria-live="off"
                       >
                         <Loader2 className="h-3 w-3 animate-spin text-clay" />
-                        生成中 · {elapsedSec}s
+                        {msg.content
+                          ? `生成中 · ${msg.content.length} 字`
+                          : elapsedSec !== null
+                            ? `生成中 · ${elapsedSec}s`
+                            : '生成中…'}
                       </div>
                     )}
                   </>

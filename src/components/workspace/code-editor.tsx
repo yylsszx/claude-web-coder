@@ -25,12 +25,18 @@ import { json } from '@codemirror/lang-json'
 import { sql } from '@codemirror/lang-sql'
 import type { Extension } from '@codemirror/state'
 import {
+  Bold,
   BookOpen,
   Check,
   CloudUpload,
+  Code,
   Columns2,
+  Copy,
   FileCode2,
+  Heading2,
+  Italic,
   Keyboard,
+  Link2,
   Minus,
   Pencil,
   PencilLine,
@@ -46,6 +52,7 @@ import {
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { copyTextToClipboard } from '@/lib/utils'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -532,6 +539,80 @@ export function CodeEditor({
     registerSelectionGetter(() => lastSelRef.current)
   }, [registerSelectionGetter])
 
+  // ===== Markdown 快捷格式化与复制全文 =====
+  const [copiedFile, setCopiedFile] = useState(false)
+
+  /** 在当前视图上执行编辑操作；预览模式下先切回编辑模式再执行 */
+  const runOnEditorView = (fn: (view: EditorView) => void) => {
+    if (mdViewRef.current === 'preview') {
+      setMdView('edit')
+      requestAnimationFrame(() => {
+        const v = editorViewRef.current
+        if (v) {
+          fn(v)
+          v.focus()
+        }
+      })
+      return
+    }
+    const v = editorViewRef.current
+    if (v) {
+      fn(v)
+      v.focus()
+    }
+  }
+
+  /** 包裹语法（加粗 / 斜体 / 行内代码）：有选区则包裹并保持选中，无选区插入占位文本并选中便于直接覆盖 */
+  const mdWrap = (before: string, after: string, placeholder: string) =>
+    runOnEditorView((view) => {
+      const { from, to } = view.state.selection.main
+      const sel = view.state.sliceDoc(from, to) || placeholder
+      view.dispatch({
+        changes: { from, to, insert: before + sel + after },
+        selection: EditorSelection.range(from + before.length, from + before.length + sel.length),
+      })
+    })
+
+  /** 链接：有选区作链接文字（选中 url 段待填），无选区插入模板并选中文字段 */
+  const mdInsertLink = () =>
+    runOnEditorView((view) => {
+      const { from, to } = view.state.selection.main
+      const sel = view.state.sliceDoc(from, to)
+      const text = sel || '链接文字'
+      const insert = `[${text}](url)`
+      view.dispatch({
+        changes: { from, to, insert },
+        selection: sel
+          ? EditorSelection.range(from + text.length + 3, from + insert.length - 1)
+          : EditorSelection.range(from + 1, from + 1 + text.length),
+      })
+    })
+
+  /** 标题切换：当前行无 # 则加 `## `，有则移除；光标列随前缀增减平移 */
+  const mdToggleHeading = () =>
+    runOnEditorView((view) => {
+      const pos = view.state.selection.main.from
+      const line = view.state.doc.lineAt(pos)
+      const m = /^(#{1,6})\s+/.exec(line.text)
+      const col = pos - line.from
+      const newText = m ? line.text.replace(/^#{1,6}\s+/, '') : '## ' + line.text
+      const nextCol = m ? Math.max(0, col - (m[0].length ?? 0)) : col + 3
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: newText },
+        selection: EditorSelection.cursor(line.from + Math.min(nextCol, newText.length)),
+      })
+    })
+
+  /** 复制当前文件全部内容 */
+  const copyFileContent = async () => {
+    if (!file) return
+    const ok = await copyTextToClipboard(file.content)
+    if (ok) {
+      setCopiedFile(true)
+      setTimeout(() => setCopiedFile(false), 1500)
+    }
+  }
+
   const language = file?.language
   const wrapText = prefs.wrap
   const fontSize = prefs.font
@@ -795,6 +876,55 @@ export function CodeEditor({
             <WrapText className="h-3 w-3" />
           </button>
         </div>
+        {isMd && mdView !== 'preview' && (
+          <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
+            <button
+              type="button"
+              onClick={() => mdWrap('**', '**', '加粗文字')}
+              title="加粗（选中则包裹）"
+              aria-label="Markdown 加粗"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+            >
+              <Bold className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => mdWrap('*', '*', '斜体文字')}
+              title="斜体（选中则包裹）"
+              aria-label="Markdown 斜体"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+            >
+              <Italic className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => mdWrap('`', '`', 'code')}
+              title="行内代码（选中则包裹）"
+              aria-label="Markdown 行内代码"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+            >
+              <Code className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={mdInsertLink}
+              title="插入链接（选中文字作链接文字）"
+              aria-label="Markdown 链接"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+            >
+              <Link2 className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={mdToggleHeading}
+              title="标题切换（当前行加 / 移除 ##）"
+              aria-label="Markdown 标题切换"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+            >
+              <Heading2 className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {isMd && (
           <div className="flex shrink-0 items-center rounded-md border border-border bg-secondary/60 p-0.5">
             {MD_VIEW_OPTIONS.map(({ value, label, icon: Icon }) => (
@@ -822,6 +952,15 @@ export function CodeEditor({
           <SaveIcon className={`h-3 w-3 ${saveState === 'saving' ? 'animate-pulse' : ''}`} />
           {saveIndicator.text}
         </span>
+        <button
+          type="button"
+          onClick={() => void copyFileContent()}
+          title="复制文件全部内容"
+          aria-label="复制文件全部内容"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+        >
+          {copiedFile ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
         <Button
           size="sm"
           className="h-7 px-3 text-xs"
