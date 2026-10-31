@@ -252,6 +252,7 @@ export function CodeEditor({
   const editorViewRef = useRef<EditorView | null>(null)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const tabStripRef = useRef<HTMLDivElement | null>(null)
   const [selState, setSelState] = useState<SelState | null>(null)
   const [mdView, setMdView] = useState<MdViewMode>('edit')
   const [cursorInfo, setCursorInfo] = useState<CursorInfo | null>(null)
@@ -275,6 +276,20 @@ export function CodeEditor({
     writeEditorPrefs({ font: Math.min(18, Math.max(11, Math.round((cur + delta) * 2) / 2)) })
   }, [])
 
+  // 标签栏竖向滚轮转为横向滚动（标签过多时无需按住 Shift；仅在溢出时劫持，其余交给原生）
+  useEffect(() => {
+    const el = tabStripRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.deltaY || e.ctrlKey || e.metaKey) return
+      if (el.scrollWidth <= el.clientWidth) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [tabs.length])
+
   const file = useMemo(
     () => tabs.find((t) => t.id === activeId) ?? null,
     [tabs, activeId]
@@ -283,6 +298,21 @@ export function CodeEditor({
   useEffect(() => {
     fileIdRef.current = file?.id ?? null
   }, [file?.id])
+
+  // Ctrl/⌘ + 滚轮调节编辑器字号（非 passive 监听以拦截浏览器页面缩放；与 A−/A+ 同一偏好持久化）
+  // 依赖 file?.id 且置于 file 声明之后：contentRef 只在打开文件后渲染，需在首个文件打开后重新绑定
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      changeFontSize(e.deltaY < 0 ? 0.5 : -0.5)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [changeFontSize, file?.id])
 
   /** 把当前视图的选区并入指定文件的快照（滚动位置另行记录） */
   const rememberSelection = useCallback((fileId: string, view: EditorView) => {
@@ -559,7 +589,7 @@ export function CodeEditor({
     <div className="flex h-full flex-col">
       {/* 标签栏 */}
       {tabs.length > 0 && (
-        <div className="thin-scrollbar flex h-9 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border bg-secondary/50 px-1.5 pt-1.5">
+        <div ref={tabStripRef} className="thin-scrollbar flex h-9 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border bg-secondary/50 px-1.5 pt-1.5">
           {tabs.map((tab, idx) => {
             const isActive = tab.id === activeId
             const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
@@ -698,7 +728,7 @@ export function CodeEditor({
             type="button"
             onClick={() => changeFontSize(-0.5)}
             disabled={fontSize <= 11}
-            title="减小字号"
+            title="减小字号（也可 Ctrl/⌘ + 滚轮）"
             aria-label="减小字号"
             className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -714,7 +744,7 @@ export function CodeEditor({
             type="button"
             onClick={() => changeFontSize(0.5)}
             disabled={fontSize >= 18}
-            title="增大字号"
+            title="增大字号（也可 Ctrl/⌘ + 滚轮）"
             aria-label="增大字号"
             className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >

@@ -541,6 +541,18 @@ export default function WorkspacePage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveTab, saveAllDirty, toggleLeftPanel, toggleRightPanel, reopenClosedTab])
 
+  // 有未保存更改时拦截刷新 / 关闭，防误触丢失（自动保存间隔内的输入、自动保存失败的改动）
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (Object.values(tabStates).some((s) => s === 'dirty')) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [tabStates])
+
   /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
   const reorderTabs = useCallback((fromId: string, toId: string) => {
     if (fromId === toId) return
