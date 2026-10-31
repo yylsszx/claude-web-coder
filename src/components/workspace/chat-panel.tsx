@@ -191,6 +191,48 @@ export function ChatPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
 
+  // ===== 流式生成实时计时 =====
+  const [elapsedSec, setElapsedSec] = useState<number | null>(null)
+
+  // ===== 输入框拖拽调高：默认 200px，向上拖增大，双击复位，偏好持久化 =====
+  const INPUT_MAX_H_KEY = 'cw-input-max-h'
+  const [inputMaxH, setInputMaxH] = useState(200)
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem(INPUT_MAX_H_KEY))
+      if (Number.isFinite(v) && v >= 96 && v <= 480) setInputMaxH(v)
+    } catch {
+      /* 存储不可用时用默认值 */
+    }
+  }, [])
+
+  /** 拖拽调整输入框最大高度（pointer 事件统一鼠标 / 触摸）；松手持久化，双击复位 200 */
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = inputMaxH
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    let latest = startH
+    const onMove = (ev: PointerEvent) => {
+      latest = Math.min(480, Math.max(96, Math.round(startH + (startY - ev.clientY))))
+      setInputMaxH(latest)
+    }
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+      try {
+        localStorage.setItem(INPUT_MAX_H_KEY, String(latest))
+      } catch {
+        /* 存储不可用时静默 */
+      }
+    }
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+  }
+
   // ===== @ 文件引用 =====
   const [mentions, setMentions] = useState<FileMeta[]>([])
   const [mentionOpen, setMentionOpen] = useState(false)
@@ -305,13 +347,27 @@ export function ChatPanel({
     el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }
 
-  /** 输入框随内容自动增高（上限 200px，超出内部滚动），发送清空后自动回落 */
+  /** 输入框随内容自动增高（上限可拖拽调节，超出内部滚动），发送清空后自动回落 */
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [input])
+    el.style.height = `${Math.min(el.scrollHeight, inputMaxH)}px`
+  }, [input, inputMaxH])
+
+  /** 流式计时：loading 期间每秒跳动，结束 / 中断后归零；定格耗时由 durationMs 展示 */
+  useEffect(() => {
+    if (!loading) {
+      setElapsedSec(null)
+      return
+    }
+    const t0 = Date.now()
+    setElapsedSec(0)
+    const timer = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - t0) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [loading])
 
   /** 消息时间：今天显示「今天 HH:MM」，今年显示「M月D日 HH:MM」，更早带年份 */
   const formatMsgTime = (iso: string) => {
@@ -991,21 +1047,32 @@ export function ChatPanel({
                 }`}
               >
                 {msg.role === 'assistant' ? (
-                  <AiMessage
-                    content={
-                      isStreaming(msg.id)
-                        ? msg.content + (msg.content ? ' ▍' : '▍')
-                        : msg.content
-                    }
-                    onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
-                    applyDisabled={files.length === 0}
-                    onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
-                    onInsertCode={isStreaming(msg.id) ? undefined : onInsertCode}
-                    insertDisabled={!activeFilePath}
-                    onApplyAll={isStreaming(msg.id) ? undefined : onApplyAll}
-                    showBatchTools={!isStreaming(msg.id)}
-                    streaming={isStreaming(msg.id)}
-                  />
+                  <>
+                    <AiMessage
+                      content={
+                        isStreaming(msg.id)
+                          ? msg.content + (msg.content ? ' ▍' : '▍')
+                          : msg.content
+                      }
+                      onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
+                      applyDisabled={files.length === 0}
+                      onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
+                      onInsertCode={isStreaming(msg.id) ? undefined : onInsertCode}
+                      insertDisabled={!activeFilePath}
+                      onApplyAll={isStreaming(msg.id) ? undefined : onApplyAll}
+                      showBatchTools={!isStreaming(msg.id)}
+                      streaming={isStreaming(msg.id)}
+                    />
+                    {isStreaming(msg.id) && elapsedSec !== null && (
+                      <div
+                        className="mt-1 flex items-center gap-1.5 text-[10.5px] text-muted-foreground/70"
+                        aria-live="off"
+                      >
+                        <Loader2 className="h-3 w-3 animate-spin text-clay" />
+                        生成中 · {elapsedSec}s
+                      </div>
+                    )}
+                  </>
                 ) : editingId === msg.id ? (
                   /* 内联编辑用户消息 */
                   <div>
@@ -1154,6 +1221,7 @@ export function ChatPanel({
             <div className="flex items-center gap-2 rounded-xl bg-card px-3 py-2.5 text-[13px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-clay" />
               正在思考…
+              {elapsedSec !== null && elapsedSec > 0 && <span className="tabular-nums">{elapsedSec}s</span>}
             </div>
           </div>
         )}
@@ -1189,6 +1257,25 @@ export function ChatPanel({
       {/* 输入区 */}
       <div className="px-3 pb-3">
         <div className="relative rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay/60">
+          {/* 拖拽把手：向上拖增大输入框高度，双击复位（200px） */}
+          <div
+            className="group/handle absolute inset-x-0 top-0 z-10 flex h-3 cursor-row-resize items-start justify-center touch-none"
+            onPointerDown={startResize}
+            onDoubleClick={() => {
+              setInputMaxH(200)
+              try {
+                localStorage.setItem(INPUT_MAX_H_KEY, '200')
+              } catch {
+                /* 存储不可用时静默 */
+              }
+            }}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="拖拽调整输入框高度，双击复位"
+            title="拖拽调整输入框高度 · 双击复位"
+          >
+            <span className="mt-0.5 h-1 w-10 rounded-full bg-border transition-colors group-hover/handle:bg-clay/60" />
+          </div>
           {activeFilePath && (
             <div className="flex items-center gap-2 px-3 pt-2.5">
               <span
@@ -1280,7 +1367,8 @@ export function ChatPanel({
                 ? `询问 AI，或让它修改 ${activeFilePath}…（@ 引用文件，Enter 发送）`
                 : '向 AI 描述你的需求…（输入 @ 引用文件作为上下文）'
             }
-            className="max-h-[200px] min-h-[72px] resize-none overflow-y-auto border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
+            style={{ maxHeight: `${inputMaxH}px` }}
+            className="min-h-[72px] resize-none overflow-y-auto border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
           />
           {loading ? (
             <Button

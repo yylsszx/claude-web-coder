@@ -215,6 +215,8 @@ interface CodeEditorProps {
   askDisabled?: boolean
   /** 注册「插入到光标位置」函数（供 AI 代码块调用） */
   registerInsert?: (fn: (text: string) => void) => void
+  /** 注册「读取当前选区」函数（供命令面板「让 AI 解释选中代码」调用；无选区时返回 null） */
+  registerSelectionGetter?: (fn: () => SelectionPayload | null) => void
   /** 最近更新的文件（空态快捷入口，最多展示 5 个） */
   recentFiles?: FileMeta[]
   /** 空态点击最近文件直接打开 */
@@ -243,6 +245,7 @@ export function CodeEditor({
   onAskSelection,
   askDisabled,
   registerInsert,
+  registerSelectionGetter,
   recentFiles,
   onOpenFile,
   onQuickOpen,
@@ -502,6 +505,32 @@ export function CodeEditor({
       insertAtCursor(text)
     })
   }, [registerInsert, insertAtCursor])
+
+  // 注册「读取当前选区」：命令面板打开导致编辑器失焦时浮动工具条会被隐藏，
+  // 故从 ref 读最后记录的非空选区（selState 隐藏后置 null，ref 保留），供 askAboutSelection 使用；
+  // 切换标签 / 文件时旧选区立即作废，避免把旧文件的代码算到新文件头上
+  const lastSelRef = useRef<SelectionPayload | null>(null)
+  const lastSelFileRef = useRef<string | null>(null)
+  useEffect(() => {
+    const fid = file?.id ?? null
+    if (lastSelFileRef.current !== fid) {
+      lastSelFileRef.current = fid
+      lastSelRef.current = null
+      return // 切文件后的第一次 effect 里 selState 仍是旧文件的残留，直接作废
+    }
+    if (!file || !selState) return
+    lastSelRef.current = {
+      text: selState.text,
+      path: file.path,
+      language: file.language,
+      fromLine: selState.fromLine,
+      toLine: selState.toLine,
+    }
+  }, [selState, file])
+  useEffect(() => {
+    if (!registerSelectionGetter) return
+    registerSelectionGetter(() => lastSelRef.current)
+  }, [registerSelectionGetter])
 
   const language = file?.language
   const wrapText = prefs.wrap

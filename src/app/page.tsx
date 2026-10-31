@@ -1253,6 +1253,22 @@ export default function WorkspacePage() {
     insertToEditorRef.current = fn
   }, [])
 
+  /** 注册编辑器选区读取函数（稳定标识；供命令面板「让 AI 解释选中代码」使用） */
+  const editorSelectionRef = useRef<(() => SelectionPayload | null) | null>(null)
+  const registerEditorSelection = useCallback((fn: () => SelectionPayload | null) => {
+    editorSelectionRef.current = fn
+  }, [])
+
+  /** 命令面板入口：解释最近一次选中的代码（无选区时提示） */
+  const explainSelectionFromPalette = useCallback(() => {
+    const sel = editorSelectionRef.current?.()
+    if (!sel) {
+      toast({ title: '请先在编辑器中选中代码' })
+      return
+    }
+    askAboutSelection('explain', sel)
+  }, [askAboutSelection, toast])
+
   /** AI 代码块「插入到光标位置」：插入后移动端自动切到编辑器 Tab */
   const insertCodeToEditor = useCallback(
     (code: string) => {
@@ -1307,6 +1323,7 @@ export default function WorkspacePage() {
       onAskSelection={askAboutSelection}
       askDisabled={chatLoading}
       registerInsert={registerEditorInsert}
+      registerSelectionGetter={registerEditorSelection}
       dirtyCount={dirtyCount}
       onSaveAll={() => void saveAllDirty()}
       recentFiles={recentFiles}
@@ -1393,6 +1410,18 @@ export default function WorkspacePage() {
             <Download className="h-4 w-4 text-clay" />
             <span>导出会话为 Markdown</span>
           </CommandItem>
+          {activeTab && (
+            <CommandItem
+              value="让 AI 解释选中代码"
+              onSelect={() => {
+                setCmdOpen(false)
+                explainSelectionFromPalette()
+              }}
+            >
+              <Sparkles className="h-4 w-4 text-clay" />
+              <span>让 AI 解释选中代码</span>
+            </CommandItem>
+          )}
           <CommandItem
             value="快速打开文件"
             onSelect={() => {
