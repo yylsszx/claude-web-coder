@@ -252,45 +252,59 @@ export function FileTree({
         const dirPath = `${prefix}${node.name}`
         return (
           <div key={nodePath}>
-            <button
-              className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-foreground/80 hover:bg-accent transition-colors ${
-                dragOverDir === nodePath ? 'bg-clay/10 ring-1 ring-inset ring-clay/70' : ''
-              }`}
-              style={{ paddingLeft: `${8 + depth * 14}px` }}
-              onClick={() => toggleFolder(nodePath)}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes(FILE_ID_TYPE)) {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = 'move'
-                  setDragOverDir(nodePath)
-                }
-              }}
-              onDragLeave={() => {
-                setDragOverDir((cur) => (cur === nodePath ? null : cur))
-              }}
-              onDrop={(e) => {
-                const fid = e.dataTransfer.getData(FILE_ID_TYPE)
-                if (!fid) return // 外部文件拖入：不拦截，冒泡给根容器走导入
-                e.preventDefault()
-                e.stopPropagation()
-                setDragOverDir(null)
-                void onMoveFile?.(fid, dirPath)
-              }}
-            >
-              {isOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-clay" />
-              <span className="truncate font-medium">{node.name}</span>
-              <span
-                className="ml-auto shrink-0 pr-0.5 text-[10px] tabular-nums text-muted-foreground/70"
-                title={`${countFiles(node)} 个文件`}
-              >
-                {countFiles(node)}
-              </span>
-            </button>
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <button
+                  className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-foreground/80 hover:bg-accent transition-colors ${
+                    dragOverDir === nodePath ? 'bg-clay/10 ring-1 ring-inset ring-clay/70' : ''
+                  }`}
+                  style={{ paddingLeft: `${8 + depth * 14}px` }}
+                  onClick={() => toggleFolder(nodePath)}
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes(FILE_ID_TYPE)) {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      setDragOverDir(nodePath)
+                    }
+                  }}
+                  onDragLeave={() => {
+                    setDragOverDir((cur) => (cur === nodePath ? null : cur))
+                  }}
+                  onDrop={(e) => {
+                    const fid = e.dataTransfer.getData(FILE_ID_TYPE)
+                    if (!fid) return // 外部文件拖入：不拦截，冒泡给根容器走导入
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setDragOverDir(null)
+                    void onMoveFile?.(fid, dirPath)
+                  }}
+                >
+                  {isOpen ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0 text-clay" />
+                  <span className="truncate font-medium">{node.name}</span>
+                  <span
+                    className="ml-auto shrink-0 pr-0.5 text-[10px] tabular-nums text-muted-foreground/70"
+                    title={`${countFiles(node)} 个文件`}
+                  >
+                    {countFiles(node)}
+                  </span>
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-48">
+                <ContextMenuItem
+                  onSelect={() => {
+                    setNewPath(`${dirPath}/`)
+                    setCreateOpen(true)
+                  }}
+                >
+                  <FilePlus2 className="h-3.5 w-3.5" /> 在此目录新建文件
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
             {isOpen && renderNodes(node.children, depth + 1, `${prefix}${node.name}/`)}
           </div>
         )

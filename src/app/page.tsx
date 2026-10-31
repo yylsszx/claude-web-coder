@@ -140,9 +140,14 @@ export default function WorkspacePage() {
     return list
   }, [])
 
+  // 会话消息加载序号守卫：快速切换会话时，慢响应不得覆盖新会话的消息
+  const loadMessagesSeqRef = useRef(0)
   const loadMessages = useCallback(async (sessionId: string) => {
+    const seq = ++loadMessagesSeqRef.current
     const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
     const data = await res.json()
+    // 响应到达前用户已切到其他会话：丢弃过期数据，避免 UI 显示错误会话的内容
+    if (seq !== loadMessagesSeqRef.current) return
     if (res.ok) setMessages(data.messages ?? [])
   }, [])
 
@@ -260,6 +265,8 @@ export default function WorkspacePage() {
         }
         const list = await refreshSessions()
         if (activeSessionRef.current === id) {
+          // 正在生成时先停止：会话已删，避免输入区一直锁定在「生成中」直到流自然结束
+          abortRef.current?.abort()
           const next = list[0]
           if (next) {
             setActiveSessionId(next.id)
