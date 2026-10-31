@@ -67,6 +67,8 @@ interface ChatPanelProps {
   onDeleteSession: (id: string) => void
   /** 切换会话置顶 */
   onTogglePin: (id: string, pinned: boolean) => void
+  /** 导出会话为 JSON 备份（拉取该会话全部消息，结构化下载） */
+  onExportSessionJson: (id: string) => void
   /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
   onDuplicateSession: (id: string) => void
   /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件 */
@@ -156,6 +158,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onTogglePin,
+  onExportSessionJson,
   onDuplicateSession,
   onSend,
   onStop,
@@ -993,6 +996,13 @@ export function ChatPanel({
                             }}
                           >
                             <Pencil className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                            title="导出 JSON 备份（含全部消息）"
+                            onClick={() => onExportSessionJson(session.id)}
+                          >
+                            <Download className="h-3 w-3 text-muted-foreground" />
                           </button>
                           <button
                             className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"

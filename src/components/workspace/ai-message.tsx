@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -45,6 +45,43 @@ const COLLAPSE_LINES = 28;
 
 /** 可实时预览的语言：完整 HTML 文档与 SVG（sandbox iframe 内 srcDoc 渲染，脚本隔离运行） */
 const PREVIEWABLE_LANGS = new Set(["html", "svg"]);
+
+/** 代码块换行偏好：模块级共享（所有代码块同步切换），localStorage 持久化，刷新后保持 */
+const CODE_WRAP_KEY = "code-block-wrap";
+let codeWrapGlobal = false;
+if (typeof window !== "undefined") {
+  try {
+    codeWrapGlobal = window.localStorage.getItem(CODE_WRAP_KEY) === "1";
+  } catch {
+    /* 存储不可用时保持默认 */
+  }
+}
+const codeWrapListeners = new Set<(v: boolean) => void>();
+function setCodeWrapGlobal(v: boolean) {
+  codeWrapGlobal = v;
+  try {
+    window.localStorage.setItem(CODE_WRAP_KEY, v ? "1" : "0");
+  } catch {
+    /* 存储不可用时仅本次生效 */
+  }
+  codeWrapListeners.forEach((fn) => fn(v));
+}
+function subscribeCodeWrap(fn: () => void) {
+  codeWrapListeners.add(fn);
+  return () => {
+    codeWrapListeners.delete(fn);
+  };
+}
+/** 换行偏好订阅（useSyncExternalStore）：SSR 快照 false 与服务端一致，客户端挂载后取真实值，
+    所有代码块同步切换（避免 effect 内 setState 触发额外渲染） */
+function useCodeWrap(): [boolean, (v: boolean) => void] {
+  const v = useSyncExternalStore(
+    subscribeCodeWrap,
+    () => codeWrapGlobal,
+    () => false,
+  );
+  return [v, setCodeWrapGlobal];
+}
 
 /** 语言标注 → 下载文件扩展名（覆盖 AI 常见写法，如 python/py、c++/cpp） */
 const LANG_EXT: Record<string, string> = {
@@ -162,8 +199,9 @@ function CodeBlock({
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // 自动换行：默认关闭（横向滚动）；长 URL / minified 代码可一键折行显示，
-  // 折行用容器类 .code-block-wrap 强制（库的 wrapLongLines 会被主题默认样式覆盖），开启时隐藏行号避免错位
-  const [wrap, setWrap] = useState(false);
+  // 折行用容器类 .code-block-wrap 强制（库的 wrapLongLines 会被主题默认样式覆盖），开启时隐藏行号避免错位；
+  // 偏好全局共享 + localStorage 持久化（刷新后保持，任意代码块切换全页同步）
+  const [wrap, setWrap] = useCodeWrap();
   // 实时预览（仅 html / svg 代码块）：sandbox iframe 内渲染，脚本可跑但与页面完全隔离
   const previewable = PREVIEWABLE_LANGS.has(language.toLowerCase());
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -268,10 +306,10 @@ function CodeBlock({
             variant="ghost"
             size="sm"
             className={`h-6 w-6 px-0 ${wrap ? "text-clay" : "text-muted-foreground"}`}
-            onClick={() => setWrap((v) => !v)}
+            onClick={() => setWrap(!wrap)}
             aria-label="切换自动换行"
             aria-pressed={wrap}
-            title={wrap ? "关闭自动换行（长行横向滚动）" : "自动换行（长行折叠显示，隐藏行号）"}
+            title={wrap ? "关闭自动换行（长行横向滚动）" : "自动换行（长行折叠显示，隐藏行号；偏好全局记忆）"}
           >
             <WrapText className="h-3 w-3" />
           </Button>

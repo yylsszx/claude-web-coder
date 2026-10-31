@@ -1,3 +1,9 @@
+## [0.48.0] - 2026-11-01
+- **代码块「换行偏好」全局记忆**：自动换行开关从单代码块独立状态升级为全页共享偏好（`useSyncExternalStore` 订阅模块级 store，规避 effect 内 setState 的额外渲染），任一代码块切换，其余全部同步；并写入 localStorage，刷新 / 重开会话后保持——长行代码多的会话不用每个代码块挨个切了；SSR 快照 false 与服务端一致，无 hydration mismatch
+- **命令面板「格式化当前 JSON 文件」**：Ctrl/⌘ + K 新增操作项，走编辑器注册链路（`registerFormatJson` + ref 转发，避免依赖变化反复注册）调用与工具栏按钮同一实现；当前打开的不是 JSON 文件时 toast 提示——手在键盘上不想移到工具栏时一键直达
+- **会话导出 JSON 备份**：会话下拉每行操作区（克隆旁）新增导出按钮，拉取该会话全部消息生成结构化 JSON（`app` / `schemaVersion` / `exportedAt` / `session` / `messages[role, content, createdAt]`，2 空格缩进）下载，文件名同 Markdown 导出规则（标题净化 + 日期后缀）；与 Markdown 导出并存——md 给人读，json 给程序迁移备份用
+- ESLint 0 错误 0 警告；src 目录 tsc 无类型错误
+
 ## [0.47.0] - 2026-11-01
 - **消息目录高亮跟随滚动**：目录展开时监听消息所在滚动容器（沿 DOM 向上找 overflow 滚动祖先，rAF 节流），把「容器顶部线下 96px 以内最靠下的标题」实时记为当前节——目录项以 terracotta 微底 + 加粗高亮（`aria-current="location"`），长回复翻到哪节一眼可见；点击跳转同样立即高亮；目录项超过一屏自动滚动保持高亮项可见（手动调 scrollTop，不波及外层滚动）；滚动 / resize / 流式内容变化均实时重算
 - **AI 代码块「自动换行」切换**：代码块操作栏（下载旁）新增换行按钮（WrapText 图标，激活态 terracotta），长 URL / minified 代码一键在「横向滚动 ↔ 折行显示」间切换；开启时隐藏行号避免错位。库自带的 `wrapLongLines` 会被 oneLight 主题默认 codeTagProps 的 `white-space:pre` 覆盖（react-syntax-highlighter 内部合并顺序问题，实测无效），改用容器类 `.code-block-wrap` 强制 `pre-wrap + break-word`

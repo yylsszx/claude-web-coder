@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -1382,6 +1382,55 @@ export default function WorkspacePage() {
     toast({ title: '会话已导出', description: `${safeName}-${dateTag}.md` })
   }, [sessions, toast])
 
+  /** 导出任意会话为 JSON 备份（会话下拉行按钮；拉取该会话全部消息，结构化含角色 / 内容 / 时间） */
+  const exportSessionJson = useCallback(
+    async (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId)
+      const title = session?.title ?? '会话'
+      try {
+        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
+        if (!res.ok) throw new Error(`拉取消息失败（HTTP ${res.status}）`)
+        const data = await res.json()
+        const msgs = (data.messages ?? []) as ChatMsg[]
+        const now = new Date()
+        const payload = {
+          app: 'claude-web-coder',
+          schemaVersion: 1,
+          exportedAt: now.toISOString(),
+          session: { title, messageCount: msgs.length },
+          messages: msgs.map((m) => ({
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+          })),
+        }
+        const dateTag = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+        const safeName =
+          title.replace(/[/\\:*?"<>|\s]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '') || 'chat'
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: 'application/json;charset=utf-8',
+        })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${safeName}-${dateTag}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast({
+          title: '会话已导出 JSON',
+          description: `${safeName}-${dateTag}.json · ${msgs.length} 条消息`,
+        })
+      } catch (error) {
+        toast({
+          title: '导出失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [sessions, toast]
+  )
+
   /** 从全局搜索跳转：打开文件并定位到指定行 */
   const jumpToLine = useCallback(
     async (fileId: string, line: number) => {
@@ -1483,6 +1532,12 @@ export default function WorkspacePage() {
     insertToEditorRef.current = fn
   }, [])
 
+  /** 注册「格式化当前 JSON 文件」（编辑器内实现，供命令面板调用） */
+  const editorFormatJsonRef = useRef<(() => void) | null>(null)
+  const registerEditorFormatJson = useCallback((fn: () => void) => {
+    editorFormatJsonRef.current = fn
+  }, [])
+
   /** 注册编辑器选区读取函数（稳定标识；供命令面板「让 AI 解释选中代码」使用） */
   const editorSelectionRef = useRef<(() => SelectionPayload | null) | null>(null)
   const registerEditorSelection = useCallback((fn: () => SelectionPayload | null) => {
@@ -1557,6 +1612,7 @@ export default function WorkspacePage() {
       onAskSelection={askAboutSelection}
       askDisabled={chatLoading}
       registerInsert={registerEditorInsert}
+      registerFormatJson={registerEditorFormatJson}
       registerSelectionGetter={registerEditorSelection}
       dirtyCount={dirtyCount}
       onSaveAll={() => void saveAllDirty()}
@@ -1594,6 +1650,7 @@ export default function WorkspacePage() {
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
       onTogglePin={toggleSessionPinned}
+      onExportSessionJson={(id) => void exportSessionJson(id)}
       onDuplicateSession={(id) => void duplicateSession(id)}
       onSend={sendMessage}
       onStop={stopGeneration}
@@ -1651,6 +1708,16 @@ export default function WorkspacePage() {
           >
             <Download className="h-4 w-4 text-clay" />
             <span>导出会话为 Markdown</span>
+          </CommandItem>
+          <CommandItem
+            value="格式化当前 JSON 文件"
+            onSelect={() => {
+              setCmdOpen(false)
+              editorFormatJsonRef.current?.()
+            }}
+          >
+            <Braces className="h-4 w-4 text-clay" />
+            <span>格式化当前 JSON 文件</span>
           </CommandItem>
           {activeTab && (
             <CommandItem

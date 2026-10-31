@@ -316,6 +316,8 @@ interface CodeEditorProps {
   askDisabled?: boolean
   /** 注册「插入到光标位置」函数（供 AI 代码块调用） */
   registerInsert?: (fn: (text: string) => void) => void
+  /** 注册「格式化当前 JSON 文件」函数（供命令面板调用；非 json 文件时 toast 提示） */
+  registerFormatJson?: (fn: () => void) => void
   /** 注册「读取当前选区」函数（供命令面板「让 AI 解释选中代码」调用；无选区时返回 null） */
   registerSelectionGetter?: (fn: () => SelectionPayload | null) => void
   /** 最近更新的文件（空态快捷入口，最多展示 5 个） */
@@ -348,6 +350,7 @@ export function CodeEditor({
   onAskSelection,
   askDisabled,
   registerInsert,
+  registerFormatJson,
   registerSelectionGetter,
   recentFiles,
   onOpenFile,
@@ -564,10 +567,15 @@ export function CodeEditor({
     }
   }, [])
 
-  /** JSON 格式化（仅 json 文件展示按钮）：parse 失败 toast 报错；成功整文替换走撤销栈（Ctrl+Z 可还原） */
+  /** JSON 格式化（工具栏按钮仅 json 文件展示；命令面板入口任意文件可达，故在函数内守卫）：
+      parse 失败 toast 报错；成功整文替换走撤销栈（Ctrl+Z 可还原） */
   const handleFormatJson = useCallback(() => {
     const view = editorViewRef.current
-    if (!view) return
+    if (!view || !file) return
+    if (file.language !== 'json') {
+      toast({ title: '当前打开的不是 JSON 文件' })
+      return
+    }
     const raw = view.state.doc.toString()
     if (!raw.trim()) return
     let data: unknown
@@ -594,7 +602,17 @@ export function CodeEditor({
       title: '已格式化 JSON',
       description: `${raw.length.toLocaleString()} → ${formatted.length.toLocaleString()} 字符（Ctrl/⌘ + Z 可还原）`,
     })
-  }, [toast])
+  }, [toast, file])
+
+  // 注册「格式化当前 JSON 文件」（命令面板入口）：经 ref 转发避免 toast/file 依赖变化反复注册
+  const formatJsonRef = useRef(handleFormatJson)
+  useEffect(() => {
+    formatJsonRef.current = handleFormatJson
+  }, [handleFormatJson])
+  useEffect(() => {
+    if (!registerFormatJson) return
+    registerFormatJson(() => formatJsonRef.current())
+  }, [registerFormatJson])
 
   const askSelection = useCallback(
     (action: SelectionAction) => {
