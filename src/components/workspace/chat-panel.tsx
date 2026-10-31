@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Check,
+  Download,
   Eraser,
   Loader2,
   MessageSquarePlus,
@@ -55,6 +56,10 @@ interface ChatPanelProps {
   onApplyCode: (code: string) => void
   /** 重新生成最后一条 AI 回复 */
   onRegenerate: () => void
+  /** 把代码块保存为新文件 */
+  onSaveAsCode: (code: string, language: string) => void
+  /** 导出当前会话为 Markdown */
+  onExportChat: () => void
 }
 
 const QUICK_ACTIONS = [
@@ -79,6 +84,8 @@ export function ChatPanel({
   onClear,
   onApplyCode,
   onRegenerate,
+  onSaveAsCode,
+  onExportChat,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -229,6 +236,17 @@ export function ChatPanel({
           variant="ghost"
           size="icon"
           className="h-7 w-7 shrink-0"
+          onClick={onExportChat}
+          disabled={loading || messages.length === 0}
+          aria-label="导出当前会话为 Markdown"
+          title="导出当前会话为 Markdown"
+        >
+          <Download className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
           onClick={onClear}
           disabled={loading}
           aria-label="清空当前会话对话"
@@ -280,6 +298,7 @@ export function ChatPanel({
                     }
                     onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
                     applyDisabled={!activeFilePath}
+                    onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
                   />
                 ) : (
                   <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">

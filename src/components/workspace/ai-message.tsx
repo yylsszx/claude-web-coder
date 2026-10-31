@@ -4,7 +4,7 @@ import { memo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { Check, Copy, FileInput } from 'lucide-react'
+import { Check, Copy, FileInput, FilePlus2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface CodeBlockProps {
@@ -12,10 +12,11 @@ interface CodeBlockProps {
   code: string
   onApply?: (code: string) => void
   applyDisabled?: boolean
+  onSaveAs?: (code: string, language: string) => void
 }
 
-/** 带操作栏的代码块：复制 / 应用到当前文件 */
-function CodeBlock({ language, code, onApply, applyDisabled }: CodeBlockProps) {
+/** 带操作栏的代码块：复制 / 应用到当前文件 / 存为新文件 */
+function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -56,6 +57,17 @@ function CodeBlock({ language, code, onApply, applyDisabled }: CodeBlockProps) {
               应用到当前文件
             </Button>
           )}
+          {onSaveAs && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground"
+              onClick={() => onSaveAs(code, language)}
+            >
+              <FilePlus2 className="h-3 w-3" />
+              存为新文件
+            </Button>
+          )}
         </div>
       </div>
       <SyntaxHighlighter
@@ -79,6 +91,8 @@ interface AiMessageProps {
   content: string
   onApplyCode?: (code: string) => void
   applyDisabled?: boolean
+  /** 存为新文件（代码块操作栏） */
+  onSaveAsCode?: (code: string, language: string) => void
 }
 
 /** 渲染 AI 回复（Markdown + 代码块） */
@@ -86,6 +100,7 @@ export const AiMessage = memo(function AiMessage({
   content,
   onApplyCode,
   applyDisabled,
+  onSaveAsCode,
 }: AiMessageProps) {
   return (
     <div className="ai-markdown">
@@ -102,6 +117,7 @@ export const AiMessage = memo(function AiMessage({
                   code={code}
                   onApply={onApplyCode}
                   applyDisabled={applyDisabled}
+                  onSaveAs={onSaveAsCode}
                 />
               )
             }

@@ -18,6 +18,8 @@ import { FileTree } from '@/components/workspace/file-tree'
 import { CodeEditor, type JumpTarget, type SaveState, type SelectionAction, type SelectionPayload } from '@/components/workspace/code-editor'
 import { ChatPanel } from '@/components/workspace/chat-panel'
 import { GlobalSearch } from '@/components/workspace/global-search'
+import { DiffDialog } from '@/components/workspace/diff-dialog'
+import { SaveAsDialog, suggestFileName } from '@/components/workspace/save-as-dialog'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
@@ -46,6 +48,11 @@ export default function WorkspacePage() {
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
   const [mobileTab, setMobileTab] = useState('chat')
+
+  // ===== 应用代码（diff 预览） / 存为新文件 =====
+  const [diffState, setDiffState] = useState<{ path: string; original: string; code: string } | null>(null)
+  const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
+  const [savingAs, setSavingAs] = useState(false)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -591,8 +598,8 @@ export default function WorkspacePage() {
         action === 'explain'
           ? '逐段解释这段代码的作用'
           : action === 'optimize'
-            ? '优化这段代码（可读性、性能与健壮性），给出优化后的完整片段并简述改动'
-            : '检查这段代码中的潜在 Bug 并给出修复后的完整片段'
+            ? '优化该文件中以下代码片段（可读性、性能与健壮性），并输出修改后的完整文件内容'
+            : '检查该文件中以下代码片段的潜在 Bug，并输出修复后的完整文件内容'
       const prompt =
         `请${goal}。代码来自文件 ${sel.path} ${lineRange}：\n\n` +
         '```' + sel.language + '\n' + sel.text + '\n```'
@@ -644,6 +651,85 @@ export default function WorkspacePage() {
     },
     [scheduleSave, toast]
   )
+
+  /** 点击「应用到当前文件」→ 先打开 diff 预览确认 */
+  const openDiff = useCallback(
+    (code: string) => {
+      const tab = activeTabRef.current
+      if (!tab) {
+        toast({ title: '请先打开一个文件', variant: 'destructive' })
+        return
+      }
+      setDiffState({ path: tab.path, original: tab.content, code })
+    },
+    [toast]
+  )
+
+  /** diff 确认后真正应用并关闭 */
+  const confirmDiff = useCallback(() => {
+    if (!diffState) return
+    applyCode(diffState.code)
+    setDiffState(null)
+  }, [applyCode, diffState])
+
+  /** 点击「存为新文件」→ 打开命名对话框 */
+  const openSaveAs = useCallback((code: string, language: string) => {
+    setSaveAsState({ code, language, suggested: suggestFileName(language) })
+  }, [])
+
+  /** 确认存为新文件：创建文件（含内容）并打开标签 */
+  const confirmSaveAs = useCallback(
+    async (path: string) => {
+      if (!saveAsState) return
+      setSavingAs(true)
+      try {
+        const res = await fetch('/api/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, content: saveAsState.code }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '创建失败')
+        await refreshFiles()
+        await openFile(data.file.id)
+        setSaveAsState(null)
+        toast({ title: '已保存为新文件', description: path })
+      } catch (error) {
+        toast({
+          title: '保存失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      } finally {
+        setSavingAs(false)
+      }
+    },
+    [openFile, refreshFiles, saveAsState, toast]
+  )
+
+  /** 导出当前会话为 Markdown 文件 */
+  const exportChat = useCallback(() => {
+    const msgs = messagesRef.current
+    if (!msgs.length) return
+    const title =
+      sessions.find((s) => s.id === activeSessionRef.current)?.title ?? '会话'
+    const now = new Date()
+    const stamp = now.toLocaleString('zh-CN', { hour12: false })
+    const body = msgs
+      .map((m) => `## ${m.role === 'user' ? '🙋 用户' : '✨ AI'}\n\n${m.content.trim()}`)
+      .join('\n\n---\n\n')
+    const md = `# 会话：${title}\n\n> 导出自 Claude 风格 AI 编程工作台 · ${stamp} · 共 ${msgs.length} 条消息\n\n---\n\n${body}\n`
+    const safeName =
+      title.replace(/[/\\:*?"<>|\s]+/g, '-').slice(0, 40).replace(/^-+|-+$/g, '') || 'chat'
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${safeName}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast({ title: '会话已导出', description: `${safeName}.md` })
+  }, [sessions, toast])
 
   /** 从全局搜索跳转：打开文件并定位到指定行 */
   const jumpToLine = useCallback(
@@ -705,8 +791,10 @@ export default function WorkspacePage() {
       onSend={sendMessage}
       onStop={stopGeneration}
       onClear={clearChat}
-      onApplyCode={applyCode}
+      onApplyCode={openDiff}
       onRegenerate={() => void regenerateLast()}
+      onSaveAsCode={openSaveAs}
+      onExportChat={exportChat}
     />
   )
 
@@ -744,6 +832,23 @@ export default function WorkspacePage() {
         open={searchOpen}
         onOpenChange={setSearchOpen}
         onJump={(fileId, line) => void jumpToLine(fileId, line)}
+      />
+      {/* 应用代码前的 diff 预览确认 */}
+      <DiffDialog
+        open={!!diffState}
+        onOpenChange={(open) => !open && setDiffState(null)}
+        filePath={diffState?.path ?? ''}
+        original={diffState?.original ?? ''}
+        incoming={diffState?.code ?? ''}
+        onConfirm={confirmDiff}
+      />
+      {/* 代码块存为新文件 */}
+      <SaveAsDialog
+        open={!!saveAsState}
+        onOpenChange={(open) => !open && !savingAs && setSaveAsState(null)}
+        suggestedName={saveAsState?.suggested ?? ''}
+        creating={savingAs}
+        onConfirm={(path) => void confirmSaveAs(path)}
       />
       {/* 顶栏 */}
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
