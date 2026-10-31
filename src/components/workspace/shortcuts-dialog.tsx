@@ -17,6 +17,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
   {
     group: '文件与搜索',
     items: [
+      { keys: ['Ctrl/⌘', 'K'], desc: '命令面板（搜索文件 / 切换会话 / 执行常用操作）' },
       { keys: ['Ctrl/⌘', 'P'], desc: '快速打开文件（按文件名搜索）' },
       { keys: ['Ctrl/⌘', 'Shift', 'F'], desc: '全局搜索（文件名 + 内容）' },
       { keys: ['Ctrl/⌘', 'F'], desc: '焦点在编辑器：查找替换；焦点在对话面板：会话内搜索消息' },

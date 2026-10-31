@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -52,6 +52,8 @@ export default function WorkspacePage() {
 
   // ===== 快速打开 / 全局搜索 / 跳转 =====
   const [quickOpen, setQuickOpen] = useState(false)
+  // 命令面板（Ctrl/⌘ + K）：文件 / 会话 / 常用操作统一入口
+  const [cmdOpen, setCmdOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
@@ -156,6 +158,31 @@ export default function WorkspacePage() {
           variant: 'destructive',
         })
         return false
+      }
+    },
+    [refreshSessions, toast]
+  )
+
+  /** 切换会话置顶（置顶后优先展示） */
+  const toggleSessionPinned = useCallback(
+    async (id: string, pinned: boolean) => {
+      // 乐观更新：先改本地，再同步服务端
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, pinned } : s)))
+      try {
+        const res = await fetch(`/api/sessions/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pinned }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error ?? '置顶失败')
+        await refreshSessions()
+      } catch (error) {
+        await refreshSessions()
+        toast({
+          title: pinned ? '置顶失败' : '取消置顶失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
       }
     },
     [refreshSessions, toast]
@@ -281,6 +308,9 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault()
         setQuickOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setCmdOpen((prev) => !prev)
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         setSearchOpen(true)
@@ -1098,6 +1128,7 @@ export default function WorkspacePage() {
       onCreateSession={createSession}
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
+      onTogglePin={toggleSessionPinned}
       onSend={sendMessage}
       onStop={stopGeneration}
       onClear={clearChat}
@@ -1109,6 +1140,122 @@ export default function WorkspacePage() {
       onExportChat={exportChat}
       onEditResend={(id, content) => void editAndResend(id, content)}
     />
+  )
+
+  /** 命令面板（Ctrl/⌘ + K）：操作 / 会话 / 文件统一入口 */
+  const cmdPaletteView = (
+    <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen}>
+      <CommandInput placeholder="搜索文件或会话，或执行操作…" />
+      <CommandList>
+        <CommandEmpty>没有匹配的结果</CommandEmpty>
+        <CommandGroup heading="操作">
+          <CommandItem
+            value="新建会话"
+            onSelect={() => {
+              setCmdOpen(false)
+              void createSession()
+            }}
+          >
+            <MessageSquarePlus className="h-4 w-4 text-clay" />
+            <span>新建会话</span>
+          </CommandItem>
+          <CommandItem
+            value="切换深浅色模式 主题"
+            onSelect={() => {
+              setCmdOpen(false)
+              setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
+            }}
+          >
+            {themeMounted && resolvedTheme === 'dark' ? (
+              <Sun className="h-4 w-4 text-clay" />
+            ) : (
+              <Moon className="h-4 w-4 text-clay" />
+            )}
+            <span>{themeMounted && resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}</span>
+          </CommandItem>
+          <CommandItem
+            value="导出会话为 Markdown"
+            onSelect={() => {
+              setCmdOpen(false)
+              exportChat()
+            }}
+          >
+            <Download className="h-4 w-4 text-clay" />
+            <span>导出会话为 Markdown</span>
+          </CommandItem>
+          <CommandItem
+            value="快速打开文件"
+            onSelect={() => {
+              setCmdOpen(false)
+              setQuickOpen(true)
+            }}
+          >
+            <FileCode2 className="h-4 w-4 text-clay" />
+            <span>快速打开文件…</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘P</span>
+          </CommandItem>
+          <CommandItem
+            value="全局搜索"
+            onSelect={() => {
+              setCmdOpen(false)
+              setSearchOpen(true)
+            }}
+          >
+            <Search className="h-4 w-4 text-clay" />
+            <span>全局搜索…</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘⇧F</span>
+          </CommandItem>
+          <CommandItem
+            value="快捷键帮助"
+            onSelect={() => {
+              setCmdOpen(false)
+              setShortcutsOpen(true)
+            }}
+          >
+            <Keyboard className="h-4 w-4 text-clay" />
+            <span>快捷键帮助</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘/</span>
+          </CommandItem>
+        </CommandGroup>
+        {sessions.length > 0 && (
+          <CommandGroup heading="切换会话">
+            {sessions.map((s) => (
+              <CommandItem
+                key={s.id}
+                value={`会话 ${s.title}`}
+                onSelect={() => {
+                  setCmdOpen(false)
+                  void switchSession(s.id)
+                }}
+              >
+                <Sparkles className="h-4 w-4 text-clay" />
+                <span className="truncate">{s.title}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                  {s.messageCount} 条
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {files.length > 0 && (
+          <CommandGroup heading="打开文件">
+            {files.map((f) => (
+              <CommandItem
+                key={f.id}
+                value={f.path}
+                onSelect={() => {
+                  setCmdOpen(false)
+                  void openFile(f.id)
+                }}
+              >
+                <FileCode2 className="h-4 w-4 text-clay" />
+                <span className="truncate font-mono text-[13px]">{f.path}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+    </CommandDialog>
   )
 
   /** 按目录分组供快速打开面板使用 */
@@ -1140,6 +1287,8 @@ export default function WorkspacePage() {
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       {/* 快速打开文件（Ctrl/⌘ + P） */}
       {quickOpenView}
+      {/* 命令面板（Ctrl/⌘ + K） */}
+      {cmdPaletteView}
       {/* 全局搜索（Ctrl/⌘ + Shift + F） */}
       <GlobalSearch
         open={searchOpen}

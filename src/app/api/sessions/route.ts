@@ -12,6 +12,7 @@ export async function GET() {
       sessions: sessions.map((s) => ({
         id: s.id,
         title: s.title,
+        pinned: s.pinned,
         messageCount: s._count.messages,
         updatedAt: s.updatedAt,
       })),

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   AtSign,
@@ -13,6 +13,7 @@ import {
   MessageSquarePlus,
   Paperclip,
   Pencil,
+  Pin,
   Plus,
   RefreshCw,
   Search,
@@ -62,6 +63,8 @@ interface ChatPanelProps {
   onCreateSession: () => void
   onRenameSession: (id: string, title: string) => Promise<boolean>
   onDeleteSession: (id: string) => void
+  /** 切换会话置顶 */
+  onTogglePin: (id: string, pinned: boolean) => void
   /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件 */
   onSend: (message: string, includeFile: boolean, mentionIds?: string[]) => void
   onStop: () => void
@@ -115,6 +118,7 @@ export function ChatPanel({
   onCreateSession,
   onRenameSession,
   onDeleteSession,
+  onTogglePin,
   onSend,
   onStop,
   onClear,
@@ -198,11 +202,15 @@ export function ChatPanel({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  /** 会话下拉按标题过滤（打开时清空） */
+  /** 会话下拉按标题过滤（打开时清空）；置顶会话始终排在最前（组内保持最近更新序） */
   const filteredSessions = useMemo(() => {
     const q = sessionFilter.trim().toLowerCase()
-    if (!q) return sessions
-    return sessions.filter((s) => s.title.toLowerCase().includes(q))
+    const list = q
+      ? sessions.filter((s) => s.title.toLowerCase().includes(q))
+      : sessions
+    return [...list].sort(
+      (a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false)
+    )
   }, [sessions, sessionFilter])
 
   useEffect(() => {
@@ -510,59 +518,90 @@ export function ChatPanel({
                   {sessions.length === 0 ? '还没有会话' : '没有匹配的会话'}
                 </p>
               ) : (
-              filteredSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={`group/session flex items-center rounded-md pr-0.5 transition-colors ${
-                    session.id === activeSessionId ? 'bg-clay/10' : 'hover:bg-accent'
-                  }`}
-                >
-                  <button
-                    className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
-                    onClick={() => {
-                      setSessionMenuOpen(false)
-                      onSwitchSession(session.id)
-                    }}
-                  >
-                    {session.id === activeSessionId ? (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
-                    ) : (
-                      <span className="h-3.5 w-3.5 shrink-0" />
+              filteredSessions.map((session, idx) => {
+                const prev = idx > 0 ? filteredSessions[idx - 1] : null
+                const showDivider = Boolean(prev?.pinned) && !session.pinned
+                return (
+                  <Fragment key={session.id}>
+                    {showDivider && (
+                      <div className="mx-2 my-1 border-t border-border/60" />
                     )}
-                    <span
-                      className={`truncate ${
-                        session.id === activeSessionId
-                          ? 'font-medium text-clay'
-                          : 'text-foreground/85'
+                    <div
+                      className={`group/session flex items-center rounded-md pr-0.5 transition-colors ${
+                        session.id === activeSessionId ? 'bg-clay/10' : 'hover:bg-accent'
                       }`}
                     >
-                      {session.title}
-                    </span>
-                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                      {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
-                    </span>
-                  </button>
-                  <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/session:opacity-100">
-                    <button
-                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
-                      title="重命名"
-                      onClick={() => {
-                        setRenameTarget(session)
-                        setRenameTitle(session.title)
-                      }}
-                    >
-                      <Pencil className="h-3 w-3 text-muted-foreground" />
-                    </button>
-                    <button
-                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
-                      title="删除会话"
-                      onClick={() => setDeleteTarget(session)}
-                    >
-                      <Trash2 className="h-3 w-3 text-destructive" />
-                    </button>
-                  </div>
-                </div>
-              ))
+                      <button
+                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
+                        onClick={() => {
+                          setSessionMenuOpen(false)
+                          onSwitchSession(session.id)
+                        }}
+                      >
+                        {session.id === activeSessionId ? (
+                          <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
+                        ) : (
+                          <span className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <span
+                          className={`truncate ${
+                            session.id === activeSessionId
+                              ? 'font-medium text-clay'
+                              : 'text-foreground/85'
+                          }`}
+                        >
+                          {session.title}
+                        </span>
+                        {session.pinned && (
+                          <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
+                        )}
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                          {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
+                        </span>
+                      </button>
+                      <div className="flex shrink-0 items-center">
+                        {session.pinned && (
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                            title="取消置顶"
+                            onClick={() => onTogglePin(session.id, false)}
+                          >
+                            <Pin className="h-3 w-3 fill-current text-clay" />
+                          </button>
+                        )}
+                        <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/session:opacity-100">
+                          {!session.pinned && (
+                            <button
+                              className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                              title="置顶会话"
+                              onClick={() => onTogglePin(session.id, true)}
+                            >
+                              <Pin className="h-3 w-3 text-muted-foreground" />
+                            </button>
+                          )}
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                            title="重命名"
+                            onClick={() => {
+                              setRenameTarget(session)
+                              setRenameTitle(session.title)
+                            }}
+                          >
+                            <Pencil className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                            title="删除会话"
+                            onClick={() => setDeleteTarget(session)}
+                          >
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </Fragment>
+                )
+              })
               )}
             </div>
           </PopoverContent>
@@ -838,6 +877,23 @@ export function ChatPanel({
                 >
                   <Pencil className="h-3 w-3" />
                   编辑
+                </button>
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => void copyMessage(msg)}
+                  title="复制原文"
+                >
+                  {copiedId === msg.id ? (
+                    <>
+                      <Check className="h-3 w-3 text-green-600" />
+                      已复制
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      复制
+                    </>
+                  )}
                 </button>
               </div>
             ) : null)}

@@ -4,11 +4,18 @@ import { getOrCreateDefaultSession } from '@/lib/session'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
-/** PATCH /api/sessions/[id] —— 重命名会话 */
+/** PATCH /api/sessions/[id] —— 重命名会话 / 切换置顶 */
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
     const body = await request.json()
+
+    // 仅切换置顶：{ pinned: boolean }
+    if (typeof body.pinned === 'boolean' && body.title === undefined) {
+      const session = await db.chatSession.update({ where: { id }, data: { pinned: body.pinned } })
+      return NextResponse.json({ session })
+    }
+
     const title = typeof body.title === 'string' ? body.title.trim() : ''
     if (!title) {
       return NextResponse.json({ error: '标题不能为空' }, { status: 400 })
@@ -26,7 +33,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ session })
   } catch (error) {
     console.error('PATCH /api/sessions/[id] failed:', error)
-    return NextResponse.json({ error: '重命名失败' }, { status: 500 })
+    return NextResponse.json({ error: '更新会话失败' }, { status: 500 })
   }
 }
 

@@ -21,6 +21,7 @@ model ProjectFile {
 model ChatSession {
   id        String        @id @default(cuid())
   title     String        @default("新会话")
+  pinned    Boolean       @default(false)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   messages  ChatMessage[]
