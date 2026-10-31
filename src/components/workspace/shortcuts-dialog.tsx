@@ -26,6 +26,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'G'], desc: '转到当前文件的指定行' },
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
       { keys: ['Ctrl/⌘', 'Shift', 'T'], desc: '重新打开最近关闭的标签页' },
+      { keys: ['Ctrl/⌘', 'Shift', 'K'], desc: '删除当前行 / 选区覆盖的行（可撤销）' },
     ],
   },
   {
@@ -34,6 +35,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['@'], desc: '在输入框引用文件作为 AI 上下文' },
       { keys: ['Enter'], desc: '发送消息' },
       { keys: ['Shift', 'Enter'], desc: '输入框内换行' },
+      { keys: ['Tab / Shift+Tab'], desc: '输入框内有选区时整块缩进 / 反缩进，无选区插入两个空格' },
       { keys: ['选中代码'], desc: '编辑器中选中后浮动工具条：解释 / 优化 / 修复' },
     ],
   },
@@ -42,7 +44,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
     items: [
       { keys: ['Ctrl/⌘', 'B'], desc: '折叠 / 展开左侧文件树' },
       { keys: ['Ctrl/⌘', 'Alt', 'B'], desc: '折叠 / 展开右侧对话面板' },
-      { keys: ['Ctrl/⌘', '/'], desc: '打开 / 关闭本快捷键帮助' },
+      { keys: ['Ctrl/⌘', '/'], desc: '编辑器内：切换行注释（含 Markdown 的 HTML 注释）；编辑器外：打开 / 关闭本快捷键帮助' },
       { keys: ['Esc'], desc: '关闭对话框、取消消息编辑' },
     ],
   },

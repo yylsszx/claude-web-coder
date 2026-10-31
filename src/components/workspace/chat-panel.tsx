@@ -1193,6 +1193,14 @@ export function ChatPanel({
                 >
                   {mounted ? formatMsgTime(msg.createdAt) : ''}
                 </span>
+                {msg.role === 'assistant' && msg.interrupted && (
+                  <span
+                    className="mr-1 shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                    title="已手动停止生成，以下为已生成的部分内容"
+                  >
+                    已中断
+                  </span>
+                )}
                 {typeof msg.durationMs === 'number' && (
                   <>
                     <span

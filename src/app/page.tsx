@@ -836,10 +836,16 @@ export default function WorkspacePage() {
           flushTimer = null
         }
         if (controller.signal.aborted) {
-          // 用户点击「停止生成」：保留用户消息与已流出的部分内容
+          // 用户点击「停止生成」：保留用户消息与已流出的部分内容，并给该回复打上中断标记
           flush()
           setMessages((prev) =>
-            prev.filter((m) => m.id !== streamId || m.content.trim() !== '')
+            prev
+              .map((m) =>
+                m.id === streamId && m.content.trim() !== ''
+                  ? { ...m, interrupted: true }
+                  : m
+              )
+              .filter((m) => m.id !== streamId || m.content.trim() !== '')
           )
           void refreshSessions()
           toast({ title: '已停止生成', description: '已生成的部分内容将保留' })
