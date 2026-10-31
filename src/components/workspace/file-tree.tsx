@@ -42,6 +42,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import type { FileMeta } from '@/lib/types'
 
 interface TreeNode {
@@ -245,13 +251,14 @@ export function FileTree({
       const isActive = file.id === activeId
       const isDirty = dirtyIds.includes(file.id)
       return (
-        <div
-          key={file.id}
-          className={`group flex items-center rounded-md pr-1 transition-colors ${
-            isActive ? 'bg-clay/10' : 'hover:bg-accent'
-          }`}
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
-        >
+        <ContextMenu key={file.id}>
+          <ContextMenuTrigger asChild>
+            <div
+              className={`group flex items-center rounded-md pr-1 transition-colors ${
+                isActive ? 'bg-clay/10' : 'hover:bg-accent'
+              }`}
+              style={{ paddingLeft: `${8 + depth * 14}px` }}
+            >
           <button
             className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left text-[13px]"
             onClick={() => onOpen(file.id)}
@@ -300,7 +307,25 @@ export function FileTree({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-40">
+          <ContextMenuItem
+            onSelect={() => {
+              setRenameTarget(file)
+              setRenamePath(file.path)
+            }}
+          >
+            <Pencil className="h-3.5 w-3.5" /> 重命名
+          </ContextMenuItem>
+          <ContextMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={() => setDeleteTarget(file)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> 删除
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       )
     })
 

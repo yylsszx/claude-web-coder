@@ -317,6 +317,15 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
         e.preventDefault()
         setShortcutsOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        // Ctrl/⌘ + Alt + ←/→ 在打开的标签间循环切换
+        e.preventDefault()
+        const tabs = openTabsRef.current
+        if (!tabs.length) return
+        const curIdx = tabs.findIndex((t) => t.id === activeTabRef.current?.id)
+        const dir = e.key === 'ArrowLeft' ? -1 : 1
+        const next = tabs[(((curIdx + dir) % tabs.length) + tabs.length) % tabs.length]
+        if (next) setActiveTabId(next.id)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -599,6 +608,8 @@ export default function WorkspacePage() {
       const sessionId = activeSessionRef.current
       let pending = ''
       let flushTimer: ReturnType<typeof setTimeout> | null = null
+      // 流是否已建立：流开始前失败（网络不通 / 上游失败已回滚）与中途错误的重试语义不同
+      let streamStarted = false
       const flush = () => {
         flushTimer = null
         if (!pending) return
@@ -630,7 +641,8 @@ export default function WorkspacePage() {
           const data = await res.json().catch(() => ({}))
           throw new Error(data.error ?? 'AI 调用失败')
         }
-
+        // 流已建立：此后出错时用户消息已在服务端持久化，重试需走 regenerate 语义
+        streamStarted = true
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
@@ -696,8 +708,28 @@ export default function WorkspacePage() {
           )
           void refreshSessions()
           toast({ title: '已停止生成', description: '已生成的部分内容将保留' })
+        } else if (streamStarted) {
+          // 中途流式错误：用户消息已持久化 → 保留（避免 UI 与库不一致）；重试走 regenerate 语义
+          setMessages((prev) => prev.filter((m) => m.id !== streamId))
+          void refreshSessions()
+          toast({
+            title: 'AI 调用失败',
+            description: error instanceof Error ? error.message : '请稍后重试',
+            variant: 'destructive',
+            action: (
+              <ToastAction
+                altText="重试"
+                onClick={() => {
+                  if (editMessageId) void runStream({ message, editMessageId })
+                  else void runStream({ message, regenerate: true })
+                }}
+              >
+                重试
+              </ToastAction>
+            ),
+          })
         } else {
-          // 真实错误：丢弃占位消息，提示错误
+          // 流开始前失败（请求未达服务端 / 上游失败已回滚用户消息）：移除临时消息保持 UI 与库一致；原样重发重试
           setMessages((prev) =>
             prev.filter((m) => m.id !== streamId && m.id !== tempUserId)
           )
@@ -705,6 +737,18 @@ export default function WorkspacePage() {
             title: 'AI 调用失败',
             description: error instanceof Error ? error.message : '请稍后重试',
             variant: 'destructive',
+            action: (
+              <ToastAction
+                altText="重试"
+                onClick={() => {
+                  if (editMessageId) void runStream({ message, editMessageId })
+                  else if (regenerate) void runStream({ message, regenerate: true })
+                  else void runStream({ message, includeFile, mentionIds })
+                }}
+              >
+                重试
+              </ToastAction>
+            ),
           })
         }
       } finally {

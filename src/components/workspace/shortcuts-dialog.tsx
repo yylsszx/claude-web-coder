@@ -22,6 +22,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Shift', 'F'], desc: '全局搜索（文件名 + 内容）' },
       { keys: ['Ctrl/⌘', 'F'], desc: '焦点在编辑器：查找替换；焦点在对话面板：会话内搜索消息' },
       { keys: ['Ctrl/⌘', 'S'], desc: '保存当前文件' },
+      { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
     ],
   },
   {
