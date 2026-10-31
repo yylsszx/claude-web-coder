@@ -158,10 +158,10 @@
   background: #5a5a54;
 }
 
-/* CodeMirror 与奶油色主题融合 */
+/* CodeMirror 与奶油色主题融合（字号由编辑器容器上的 --cm-font-size 变量控制，可调） */
 .cm-editor {
   background: transparent !important;
-  font-size: 13.5px;
+  font-size: var(--cm-font-size, 13.5px);
 }
 .cm-editor.cm-focused {
   outline: none !important;

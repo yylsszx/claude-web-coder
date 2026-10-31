@@ -944,13 +944,10 @@ export default function WorkspacePage() {
     [pendingApplyCode, toast]
   )
 
-  /** diff 确认后真正应用并关闭；批量队列未完则自动弹出下一段的目标选择 */
-  const confirmDiff = useCallback(() => {
+  /** diff 确认后真正应用并关闭（content 为按块选择重建后的内容）；批量队列未完则自动弹出下一段的目标选择 */
+  const confirmDiff = useCallback((content: string) => {
     if (!diffState) return
-    applyToTarget(
-      { ...diffState.file, prevContent: diffState.original },
-      diffState.code
-    )
+    applyToTarget({ ...diffState.file, prevContent: diffState.original }, content)
     setDiffState(null)
     if (pendingBatch && pendingBatch.idx < pendingBatch.codes.length - 1) {
       const idx = pendingBatch.idx + 1

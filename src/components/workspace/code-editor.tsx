@@ -1,6 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
@@ -21,10 +29,13 @@ import {
   CloudUpload,
   Columns2,
   FileCode2,
+  Minus,
   Pencil,
   PencilLine,
+  Plus,
   Sparkles,
   SquarePen,
+  WrapText,
   X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -111,6 +122,59 @@ const MD_VIEW_OPTIONS: { value: MdViewMode; label: string; icon: typeof Pencil }
   { value: 'preview', label: '预览', icon: BookOpen },
 ]
 
+/**
+ * 编辑器显示偏好（自动换行 / 字号）作为外部存储（localStorage）：
+ * SSR 快照返回默认值，客户端读取缓存值，避免 hydration 不一致与 effect 内 setState
+ */
+interface EditorPrefs {
+  wrap: boolean
+  font: number
+}
+const DEFAULT_PREFS: EditorPrefs = { wrap: false, font: 13.5 }
+let prefsCache: EditorPrefs | null = null
+const prefsListeners = new Set<() => void>()
+
+function readEditorPrefs(): EditorPrefs {
+  if (prefsCache) return prefsCache
+  let next = DEFAULT_PREFS
+  try {
+    const font = Number(localStorage.getItem('cw-editor-font'))
+    next = {
+      wrap: localStorage.getItem('cw-editor-wrap') === '1',
+      font: Number.isFinite(font) && font >= 11 && font <= 18 ? font : DEFAULT_PREFS.font,
+    }
+  } catch {
+    /* 存储不可用时用默认值 */
+  }
+  prefsCache = next
+  return next
+}
+
+function writeEditorPrefs(patch: Partial<EditorPrefs>) {
+  const next = { ...readEditorPrefs(), ...patch }
+  prefsCache = next
+  try {
+    localStorage.setItem('cw-editor-wrap', next.wrap ? '1' : '0')
+    localStorage.setItem('cw-editor-font', String(next.font))
+  } catch {
+    /* 存储不可用时仅内存生效 */
+  }
+  prefsListeners.forEach((l) => l())
+}
+
+function useEditorPrefs(): EditorPrefs {
+  return useSyncExternalStore(
+    (cb) => {
+      prefsListeners.add(cb)
+      return () => {
+        prefsListeners.delete(cb)
+      }
+    },
+    readEditorPrefs,
+    () => DEFAULT_PREFS
+  )
+}
+
 interface CodeEditorProps {
   tabs: FileFull[]
   activeId: string | null
@@ -164,6 +228,15 @@ export function CodeEditor({
   const dragTabIdRef = useRef<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  // 编辑器显示偏好：自动换行 / 字号（localStorage 外部存储，刷新后保持；SSR 快照给默认值避免 hydration 不一致）
+  const prefs = useEditorPrefs()
+  const toggleWrap = useCallback(() => {
+    writeEditorPrefs({ wrap: !readEditorPrefs().wrap })
+  }, [])
+  const changeFontSize = useCallback((delta: number) => {
+    const cur = readEditorPrefs().font
+    writeEditorPrefs({ font: Math.min(18, Math.max(11, Math.round((cur + delta) * 2) / 2)) })
+  }, [])
 
   const file = useMemo(
     () => tabs.find((t) => t.id === activeId) ?? null,
@@ -323,12 +396,15 @@ export function CodeEditor({
   }, [registerInsert, insertAtCursor])
 
   const language = file?.language
+  const wrapText = prefs.wrap
+  const fontSize = prefs.font
   const extensions = useMemo<Extension[]>(() => {
     const base: Extension[] = [search(), keymap.of(searchKeymap)]
+    if (wrapText) base.push(EditorView.lineWrapping)
     if (!language) return base
     const factory = LANGUAGE_EXTENSIONS[language]
     return factory ? [factory(), ...base] : base
-  }, [language])
+  }, [language, wrapText])
 
   if (!file) {
     return (
@@ -470,6 +546,50 @@ export function CodeEditor({
         <Badge variant="secondary" className="shrink-0 text-[11px]">
           {LANGUAGE_LABELS[file.language] ?? file.language}
         </Badge>
+        {/* 显示偏好：字号调节 + 自动换行开关 */}
+        <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
+          <button
+            type="button"
+            onClick={() => changeFontSize(-0.5)}
+            disabled={fontSize <= 11}
+            title="减小字号"
+            aria-label="减小字号"
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Minus className="h-3 w-3" />
+          </button>
+          <span
+            className="w-10 shrink-0 text-center text-[10.5px] tabular-nums text-muted-foreground"
+            title="编辑器字号"
+          >
+            {fontSize}px
+          </span>
+          <button
+            type="button"
+            onClick={() => changeFontSize(0.5)}
+            disabled={fontSize >= 18}
+            title="增大字号"
+            aria-label="增大字号"
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+          <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+          <button
+            type="button"
+            onClick={toggleWrap}
+            title={wrapText ? '关闭自动换行' : '开启自动换行（长行折行显示）'}
+            aria-label="切换自动换行"
+            aria-pressed={wrapText}
+            className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+              wrapText
+                ? 'bg-card text-clay shadow-sm'
+                : 'text-muted-foreground hover:bg-card hover:text-foreground'
+            }`}
+          >
+            <WrapText className="h-3 w-3" />
+          </button>
+        </div>
         {isMd && (
           <div className="flex shrink-0 items-center rounded-md border border-border bg-secondary/60 p-0.5">
             {MD_VIEW_OPTIONS.map(({ value, label, icon: Icon }) => (
@@ -518,6 +638,7 @@ export function CodeEditor({
             className={`thin-scrollbar min-w-0 bg-card ${
               showPreview ? 'flex-1 overflow-hidden' : 'h-full flex-1 overflow-auto'
             }`}
+            style={{ '--cm-font-size': `${fontSize}px` } as CSSProperties}
           >
             <CodeMirror
               key={file.id}
