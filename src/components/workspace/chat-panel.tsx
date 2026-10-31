@@ -1184,12 +1184,22 @@ export function ChatPanel({
                   {mounted ? formatMsgTime(msg.createdAt) : ''}
                 </span>
                 {typeof msg.durationMs === 'number' && (
-                  <span
-                    className="mr-1 shrink-0 text-[10.5px] text-muted-foreground/60"
-                    title="本次生成耗时"
-                  >
-                    · {(msg.durationMs / 1000).toFixed(1)}s
-                  </span>
+                  <>
+                    <span
+                      className="mr-0.5 shrink-0 text-[10.5px] text-muted-foreground/60"
+                      title="本次生成耗时"
+                    >
+                      · {(msg.durationMs / 1000).toFixed(1)}s
+                    </span>
+                    {msg.content.length > 0 && (
+                      <span
+                        className="mr-1 shrink-0 text-[10.5px] text-muted-foreground/60"
+                        title="本次生成字数"
+                      >
+                        · {msg.content.length.toLocaleString()} 字
+                      </span>
+                    )}
+                  </>
                 )}
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"

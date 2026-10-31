@@ -505,8 +505,14 @@ export default function WorkspacePage() {
         e.preventDefault()
         setSearchOpen(true)
       } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
-        e.preventDefault()
-        setShortcutsOpen((prev) => !prev)
+        // 编辑器内 Ctrl/⌘ + / 是 CodeMirror 行注释（handled 时已 preventDefault）；
+        // 编辑器外（或无注释语言）用于打开快捷键面板
+        const inEditor =
+          e.target instanceof HTMLElement && e.target.closest('.cm-editor')
+        if (!inEditor && !e.defaultPrevented) {
+          e.preventDefault()
+          setShortcutsOpen((prev) => !prev)
+        }
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
         // Ctrl/⌘ + B 折叠/展开左文件树；Ctrl/⌘ + Alt + B 折叠/展开右对话面板
         e.preventDefault()

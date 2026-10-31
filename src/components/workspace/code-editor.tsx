@@ -12,15 +12,15 @@ import {
 import CodeMirror from '@uiw/react-codemirror'
 import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
-import { EditorSelection } from '@codemirror/state'
 import type { ViewUpdate } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
 import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { html } from '@codemirror/lang-html'
 import { css } from '@codemirror/lang-css'
-import { markdown } from '@codemirror/lang-markdown'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { json } from '@codemirror/lang-json'
 import { sql } from '@codemirror/lang-sql'
 import type { Extension } from '@codemirror/state'
@@ -125,6 +125,7 @@ interface CursorInfo {
   selLines: number
   selChars: number
   totalChars: number
+  totalLines: number
 }
 
 /** 每个标签的记忆快照：光标选区（doc 偏移）+ 滚动位置，切换标签时恢复 */
@@ -386,6 +387,7 @@ export function CodeEditor({
       selLines: sel.empty ? 0 : view.state.doc.lineAt(sel.to).number - view.state.doc.lineAt(sel.from).number + 1,
       selChars: sel.empty ? 0 : sel.to - sel.from,
       totalChars: view.state.doc.length,
+      totalLines: view.state.doc.lines,
     }
     setCursorInfo((prev) =>
       prev &&
@@ -393,7 +395,8 @@ export function CodeEditor({
       prev.col === next.col &&
       prev.selLines === next.selLines &&
       prev.selChars === next.selChars &&
-      prev.totalChars === next.totalChars
+      prev.totalChars === next.totalChars &&
+      prev.totalLines === next.totalLines
         ? prev
         : next
     )
@@ -621,7 +624,17 @@ export function CodeEditor({
     if (wrapText) base.push(EditorView.lineWrapping)
     if (!language) return base
     const factory = LANGUAGE_EXTENSIONS[language]
-    return factory ? [factory(), ...base] : base
+    const langExts: Extension[] = []
+    if (factory) langExts.push(factory())
+    // Markdown 原生无 commentTokens（Ctrl/⌘ + / 不生效），补上 HTML 块注释让 toggleComment 可用
+    if (language === 'markdown') {
+      langExts.push(
+        markdownLanguage.data.of({
+          commentTokens: { block: { open: '<!--', close: '-->' } },
+        }),
+      )
+    }
+    return [...langExts, ...base]
   }, [language, wrapText])
 
   if (!file) {
@@ -1094,8 +1107,11 @@ export function CodeEditor({
               {cursorInfo.selChars} 字符
             </span>
           )}
-          <span className="ml-auto">
-            共 {cursorInfo.totalChars.toLocaleString()} 字符
+          <span className="ml-auto flex items-center gap-2.5">
+            {language && <span>{LANGUAGE_LABELS[language] ?? language}</span>}
+            <span>
+              共 {cursorInfo.totalLines.toLocaleString()} 行 · {cursorInfo.totalChars.toLocaleString()} 字符
+            </span>
           </span>
         </div>
       )}
