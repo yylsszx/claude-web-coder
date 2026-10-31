@@ -30,6 +30,7 @@ import {
   CloudUpload,
   Columns2,
   FileCode2,
+  Keyboard,
   Minus,
   Pencil,
   PencilLine,
@@ -37,6 +38,7 @@ import {
   Redo2,
   Undo2,
   Save,
+  Search,
   Sparkles,
   SquarePen,
   WrapText,
@@ -51,7 +53,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
-import type { FileFull } from '@/lib/types'
+import type { FileFull, FileMeta } from '@/lib/types'
 
 const LANGUAGE_EXTENSIONS: Record<string, () => Extension> = {
   javascript: () => javascript({ jsx: true }),
@@ -213,6 +215,14 @@ interface CodeEditorProps {
   askDisabled?: boolean
   /** 注册「插入到光标位置」函数（供 AI 代码块调用） */
   registerInsert?: (fn: (text: string) => void) => void
+  /** 最近更新的文件（空态快捷入口，最多展示 5 个） */
+  recentFiles?: FileMeta[]
+  /** 空态点击最近文件直接打开 */
+  onOpenFile?: (id: string) => void
+  /** 空态快速打开（Ctrl/⌘ + P） */
+  onQuickOpen?: () => void
+  /** 空态全局搜索（Ctrl/⌘ + Shift + F） */
+  onGlobalSearch?: () => void
 }
 
 export function CodeEditor({
@@ -233,6 +243,10 @@ export function CodeEditor({
   onAskSelection,
   askDisabled,
   registerInsert,
+  recentFiles,
+  onOpenFile,
+  onQuickOpen,
+  onGlobalSearch,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const editorViewRef = useRef<EditorView | null>(null)
@@ -472,16 +486,54 @@ export function CodeEditor({
 
   if (!file) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary">
           <FileCode2 className="h-7 w-7 text-clay" />
         </div>
-        <p className="font-claude-serif text-base font-medium text-foreground/70">
-          选择或新建一个文件开始编码
-        </p>
-        <p className="max-w-[260px] text-xs text-muted-foreground">
-          支持多标签页编辑、语法高亮与自动保存；选中代码可让 AI 解释、优化或修复
-        </p>
+        <div>
+          <p className="font-claude-serif text-base font-medium text-foreground/70">
+            选择或新建一个文件开始编码
+          </p>
+          <p className="mx-auto mt-1.5 max-w-[300px] text-xs text-muted-foreground">
+            支持多标签页编辑、语法高亮与自动保存；选中代码可让 AI 解释、优化或修复
+          </p>
+        </div>
+        {recentFiles && recentFiles.length > 0 && (
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              最近更新
+            </p>
+            {recentFiles.slice(0, 5).map((f) => (
+              <button
+                key={f.id}
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] text-foreground/80 transition-colors hover:bg-accent hover:text-clay"
+                onClick={() => onOpenFile?.(f.id)}
+                title={`打开 ${f.path}`}
+              >
+                <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="font-mono">{f.path}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {(onQuickOpen || onGlobalSearch) && (
+          <div className="flex items-center gap-2">
+            {onQuickOpen && (
+              <Button variant="secondary" size="sm" className="h-7 gap-1.5 px-3 text-xs" onClick={onQuickOpen}>
+                <Search className="h-3 w-3" />
+                快速打开
+                <span className="text-[10px] text-muted-foreground">⌘P</span>
+              </Button>
+            )}
+            {onGlobalSearch && (
+              <Button variant="secondary" size="sm" className="h-7 gap-1.5 px-3 text-xs" onClick={onGlobalSearch}>
+                <Keyboard className="h-3 w-3" />
+                全局搜索
+                <span className="text-[10px] text-muted-foreground">⌘⇧F</span>
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     )
   }

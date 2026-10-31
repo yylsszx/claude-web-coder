@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -107,6 +107,13 @@ export default function WorkspacePage() {
   // refs：异步回调中读取最新值
   const openTabsRef = useRef(openTabs)
   openTabsRef.current = openTabs
+  // 最近关闭的标签（LIFO，Ctrl/⌘ + Shift + T 重开；仅记录仍存在的文件）
+  const closedTabsRef = useRef<string[]>([])
+  // 文件列表快照（reopenClosedTab 校验文件是否仍存在，避免陈旧闭包）
+  const filesRef = useRef(files)
+  useEffect(() => {
+    filesRef.current = files
+  }, [files])
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
   const activeSessionRef = useRef(activeSessionId)
@@ -362,61 +369,6 @@ export default function WorkspacePage() {
     [saveTab]
   )
 
-  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 保存；Ctrl/⌘ + / 快捷键帮助
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        const tab = activeTabRef.current
-        if (!tab) return
-        if (saveTimersRef.current[tab.id]) {
-          clearTimeout(saveTimersRef.current[tab.id])
-          delete saveTimersRef.current[tab.id]
-        }
-        void saveTab(tab.id)
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
-        e.preventDefault()
-        setQuickOpen((prev) => !prev)
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setCmdOpen((prev) => !prev)
-      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault()
-        setSearchOpen(true)
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
-        e.preventDefault()
-        setShortcutsOpen((prev) => !prev)
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
-        // Ctrl/⌘ + B 折叠/展开左文件树；Ctrl/⌘ + Alt + B 折叠/展开右对话面板
-        e.preventDefault()
-        if (e.altKey) toggleRightPanel()
-        else toggleLeftPanel()
-      } else if ((e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 's') {
-        // Ctrl/⌘ + Alt + S 保存全部未保存文件
-        e.preventDefault()
-        void saveAllDirty()
-      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g') {
-        // Ctrl/⌘ + G 转到行（需有打开的标签）
-        e.preventDefault()
-        if (activeTabRef.current) {
-          setGotoValue('')
-          setGotoOpen(true)
-        }
-      } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        // Ctrl/⌘ + Alt + ←/→ 在打开的标签间循环切换
-        e.preventDefault()
-        const tabs = openTabsRef.current
-        if (!tabs.length) return
-        const curIdx = tabs.findIndex((t) => t.id === activeTabRef.current?.id)
-        const dir = e.key === 'ArrowLeft' ? -1 : 1
-        const next = tabs[(((curIdx + dir) % tabs.length) + tabs.length) % tabs.length]
-        if (next) setActiveTabId(next.id)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveTab, saveAllDirty, toggleLeftPanel, toggleRightPanel])
-
   // ===== 文件操作 =====
   const refreshFiles = useCallback(async () => {
     const res = await fetch('/api/files')
@@ -454,6 +406,8 @@ export default function WorkspacePage() {
     async (id: string) => {
       const tab = openTabsRef.current.find((t) => t.id === id)
       if (!tab) return
+      // 记入关闭栈（去重后置顶，上限 20），供 Ctrl/⌘ + Shift + T 重开
+      closedTabsRef.current = [...closedTabsRef.current.filter((tid) => tid !== id), id].slice(-20)
       // 未保存则先保存
       if (saveTimersRef.current[id]) {
         clearTimeout(saveTimersRef.current[id])
@@ -510,6 +464,82 @@ export default function WorkspacePage() {
       await closeTab(tid)
     }
   }, [closeTab])
+
+  /** Ctrl/⌘ + Shift + T：重开最近关闭的标签（已删除的文件自动跳过；重开后出栈，连按继续回溯更早的） */
+  const reopenClosedTab = useCallback(async () => {
+    const stack = closedTabsRef.current
+    while (stack.length) {
+      const id = stack[stack.length - 1]
+      if (filesRef.current.some((f) => f.id === id)) {
+        stack.pop()
+        await openFile(id)
+        return
+      }
+      // 文件已被删除，弹出后继续找上一个
+      stack.pop()
+    }
+    toast({ title: '没有可重新打开的标签' })
+  }, [openFile, toast])
+
+  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 保存；Ctrl/⌘ + / 快捷键帮助
+  // （置于此处：依赖的 reopenClosedTab 在上方定义，避免 TDZ）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        const tab = activeTabRef.current
+        if (!tab) return
+        if (saveTimersRef.current[tab.id]) {
+          clearTimeout(saveTimersRef.current[tab.id])
+          delete saveTimersRef.current[tab.id]
+        }
+        void saveTab(tab.id)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setQuickOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setCmdOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
+      } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+        e.preventDefault()
+        setShortcutsOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        // Ctrl/⌘ + B 折叠/展开左文件树；Ctrl/⌘ + Alt + B 折叠/展开右对话面板
+        e.preventDefault()
+        if (e.altKey) toggleRightPanel()
+        else toggleLeftPanel()
+      } else if ((e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 's') {
+        // Ctrl/⌘ + Alt + S 保存全部未保存文件
+        e.preventDefault()
+        void saveAllDirty()
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g') {
+        // Ctrl/⌘ + G 转到行（需有打开的标签）
+        e.preventDefault()
+        if (activeTabRef.current) {
+          setGotoValue('')
+          setGotoOpen(true)
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        // Ctrl/⌘ + Alt + ←/→ 在打开的标签间循环切换
+        e.preventDefault()
+        const tabs = openTabsRef.current
+        if (!tabs.length) return
+        const curIdx = tabs.findIndex((t) => t.id === activeTabRef.current?.id)
+        const dir = e.key === 'ArrowLeft' ? -1 : 1
+        const next = tabs[(((curIdx + dir) % tabs.length) + tabs.length) % tabs.length]
+        if (next) setActiveTabId(next.id)
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 't') {
+        // Ctrl/⌘ + Shift + T 重开最近关闭的标签
+        e.preventDefault()
+        void reopenClosedTab()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [saveTab, saveAllDirty, toggleLeftPanel, toggleRightPanel, reopenClosedTab])
 
   /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
   const reorderTabs = useCallback((fromId: string, toId: string) => {
@@ -1237,6 +1267,17 @@ export default function WorkspacePage() {
     />
   )
 
+  /** 未保存标签总数（工具栏「全部保存」与命令面板共用） */
+  const dirtyCount = useMemo(
+    () => Object.values(tabStates).filter((s) => s === 'dirty').length,
+    [tabStates]
+  )
+  /** 最近更新的文件（编辑器空态快捷入口，最多 5 个） */
+  const recentFiles = useMemo(
+    () => [...files].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5),
+    [files]
+  )
+
   const editorView = (
     <CodeEditor
       tabs={openTabs}
@@ -1253,8 +1294,12 @@ export default function WorkspacePage() {
       onAskSelection={askAboutSelection}
       askDisabled={chatLoading}
       registerInsert={registerEditorInsert}
-      dirtyCount={Object.values(tabStates).filter((s) => s === 'dirty').length}
+      dirtyCount={dirtyCount}
       onSaveAll={() => void saveAllDirty()}
+      recentFiles={recentFiles}
+      onOpenFile={(id) => void openFile(id)}
+      onQuickOpen={() => setQuickOpen(true)}
+      onGlobalSearch={() => setSearchOpen(true)}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -1357,6 +1402,86 @@ export default function WorkspacePage() {
             <span>全局搜索…</span>
             <span className="ml-auto text-[10px] text-muted-foreground">⌘⇧F</span>
           </CommandItem>
+          <CommandItem
+            value="重新打开关闭的标签 撤销关闭"
+            onSelect={() => {
+              setCmdOpen(false)
+              void reopenClosedTab()
+            }}
+          >
+            <RotateCcw className="h-4 w-4 text-clay" />
+            <span>重新打开关闭的标签</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘⇧T</span>
+          </CommandItem>
+          {dirtyCount > 0 && (
+            <CommandItem
+              value="保存全部未保存文件"
+              onSelect={() => {
+                setCmdOpen(false)
+                void saveAllDirty()
+              }}
+            >
+              <Save className="h-4 w-4 text-clay" />
+              <span>保存全部未保存文件（{dirtyCount}）</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">⌘⌥S</span>
+            </CommandItem>
+          )}
+          {openTabs.length > 0 && (
+            <CommandItem
+              value="转到行 跳转行号"
+              onSelect={() => {
+                setCmdOpen(false)
+                setGotoValue('')
+                setGotoOpen(true)
+              }}
+            >
+              <Hash className="h-4 w-4 text-clay" />
+              <span>转到行…</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">⌘G</span>
+            </CommandItem>
+          )}
+          <CommandItem
+            value={leftCollapsed ? '展开文件树' : '折叠文件树'}
+            onSelect={() => {
+              setCmdOpen(false)
+              toggleLeftPanel()
+            }}
+          >
+            {leftCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4 text-clay" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4 text-clay" />
+            )}
+            <span>{leftCollapsed ? '展开文件树' : '折叠文件树'}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘B</span>
+          </CommandItem>
+          <CommandItem
+            value={rightCollapsed ? '展开 AI 对话面板' : '折叠 AI 对话面板'}
+            onSelect={() => {
+              setCmdOpen(false)
+              toggleRightPanel()
+            }}
+          >
+            {rightCollapsed ? (
+              <PanelRightOpen className="h-4 w-4 text-clay" />
+            ) : (
+              <PanelRightClose className="h-4 w-4 text-clay" />
+            )}
+            <span>{rightCollapsed ? '展开 AI 对话面板' : '折叠 AI 对话面板'}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">⌘⌥B</span>
+          </CommandItem>
+          {activeSessionId && messages.length > 0 && (
+            <CommandItem
+              value="清空当前会话对话"
+              onSelect={() => {
+                setCmdOpen(false)
+                void clearChat()
+              }}
+            >
+              <Trash2 className="h-4 w-4 text-clay" />
+              <span>清空当前会话对话</span>
+            </CommandItem>
+          )}
           <CommandItem
             value="快捷键帮助"
             onSelect={() => {

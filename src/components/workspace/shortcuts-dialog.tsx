@@ -25,6 +25,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Alt', 'S'], desc: '保存全部未保存文件' },
       { keys: ['Ctrl/⌘', 'G'], desc: '转到当前文件的指定行' },
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
+      { keys: ['Ctrl/⌘', 'Shift', 'T'], desc: '重新打开最近关闭的标签页' },
     ],
   },
   {
