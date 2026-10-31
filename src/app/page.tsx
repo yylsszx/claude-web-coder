@@ -14,6 +14,8 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { ToastAction } from '@/components/ui/toast'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -54,6 +56,9 @@ export default function WorkspacePage() {
   const [quickOpen, setQuickOpen] = useState(false)
   // 命令面板（Ctrl/⌘ + K）：文件 / 会话 / 常用操作统一入口
   const [cmdOpen, setCmdOpen] = useState(false)
+  // 转到行（Ctrl/⌘ + G）：定位当前文件指定行，复用 jumpTarget 机制
+  const [gotoOpen, setGotoOpen] = useState(false)
+  const [gotoValue, setGotoValue] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
@@ -214,6 +219,12 @@ export default function WorkspacePage() {
         if (!res.ok) {
           const data = await res.json()
           throw new Error(data.error ?? '删除失败')
+        }
+        // 同步清理该会话的输入草稿，避免 localStorage 孤儿键
+        try {
+          localStorage.removeItem(`cw-chat-draft-${id}`)
+        } catch {
+          /* 忽略 */
         }
         const list = await refreshSessions()
         if (activeSessionRef.current === id) {
@@ -383,6 +394,13 @@ export default function WorkspacePage() {
         // Ctrl/⌘ + Alt + S 保存全部未保存文件
         e.preventDefault()
         void saveAllDirty()
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g') {
+        // Ctrl/⌘ + G 转到行（需有打开的标签）
+        e.preventDefault()
+        if (activeTabRef.current) {
+          setGotoValue('')
+          setGotoOpen(true)
+        }
       } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         // Ctrl/⌘ + Alt + ←/→ 在打开的标签间循环切换
         e.preventDefault()
@@ -1100,6 +1118,15 @@ export default function WorkspacePage() {
     [openFile]
   )
 
+  /** 转到行（Ctrl/⌘ + G）：定位当前标签的指定行 */
+  const handleGotoLine = useCallback(() => {
+    const tab = activeTabRef.current
+    const line = Number(gotoValue)
+    if (!tab || !Number.isFinite(line) || line < 1) return
+    setGotoOpen(false)
+    void jumpToLine(tab.id, Math.floor(line))
+  }, [gotoValue, jumpToLine])
+
   /** 拖拽本地文件到文件树导入工作区：重名自动加后缀，单文件限 1MB */
   const importDroppedFiles = useCallback(
     async (dropped: File[]) => {
@@ -1471,6 +1498,28 @@ export default function WorkspacePage() {
       />
       {/* 快捷键帮助（Ctrl/⌘ + /） */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
+      {/* 转到行（Ctrl/⌘ + G） */}
+      <Dialog open={gotoOpen} onOpenChange={setGotoOpen}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-claude-serif">转到行</DialogTitle>
+            <DialogDescription>
+              定位到 <span className="font-medium">{activeTabRef.current?.path ?? '当前文件'}</span> 的指定行，回车确认
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={gotoValue}
+            onChange={(e) => setGotoValue(e.target.value.replace(/[^\d]/g, ''))}
+            placeholder="行号，如 42"
+            inputMode="numeric"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleGotoLine()
+            }}
+          />
+        </DialogContent>
+      </Dialog>
       {/* 顶栏 */}
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-clay">

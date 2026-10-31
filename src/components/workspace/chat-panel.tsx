@@ -186,6 +186,37 @@ export function ChatPanel({
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
 
+  // 草稿按会话持久化：输入时实时写入 localStorage（handleInputChange / pickMention），
+  // 切会话时恢复对应草稿、发送后清除；刷新后不丢
+  const [lastDraftSession, setLastDraftSession] = useState<string | null>(activeSessionId)
+  if (lastDraftSession !== activeSessionId) {
+    setLastDraftSession(activeSessionId)
+    let restored = ''
+    try {
+      restored = activeSessionId
+        ? localStorage.getItem(`cw-chat-draft-${activeSessionId}`) ?? ''
+        : ''
+    } catch {
+      /* 存储不可用时用空草稿 */
+    }
+    setInput(restored)
+  }
+
+  // 首次挂载恢复当前会话草稿：ChatPanel 在数据就绪后才挂载（initialLoading 期间不渲染），
+  // 此时 lastDraftSession 初始值即 activeSessionId，上面的渲染期分支不会触发，需在此补一次恢复
+  useEffect(() => {
+    let draft = ''
+    try {
+      draft = activeSessionId
+        ? localStorage.getItem(`cw-chat-draft-${activeSessionId}`) ?? ''
+        : ''
+    } catch {
+      /* 存储不可用时忽略 */
+    }
+    if (draft) setInput(draft)
+    // 仅挂载时执行一次（activeSessionId 取挂载时刻的最终值）
+  }, [])
+
   // 焦点在对话面板内时 Ctrl/⌘ + F 打开会话内搜索（不干扰编辑器/全局搜索）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -287,6 +318,11 @@ export function ChatPanel({
       mentions.length ? mentions.map((m) => m.id) : undefined
     )
     setInput('')
+    try {
+      if (activeSessionId) localStorage.removeItem(`cw-chat-draft-${activeSessionId}`)
+    } catch {
+      /* 存储不可用时静默 */
+    }
     setMentions([])
     setMentionOpen(false)
     setMentionQuery('')
@@ -316,9 +352,21 @@ export function ChatPanel({
     }
   }
 
+  /** 输入时实时持久化当前会话草稿（切会话 / 刷新后可恢复） */
+  const persistDraft = (text: string) => {
+    if (!activeSessionId) return
+    try {
+      if (text) localStorage.setItem(`cw-chat-draft-${activeSessionId}`, text)
+      else localStorage.removeItem(`cw-chat-draft-${activeSessionId}`)
+    } catch {
+      /* 存储不可用时静默 */
+    }
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
     setInput(value)
+    persistDraft(value)
     detectMention(value, e.target.selectionStart ?? value.length)
   }
 
@@ -332,6 +380,7 @@ export function ChatPanel({
     const newText =
       atIdx >= 0 ? before.slice(0, atIdx) + '@' + file.path + ' ' + after : input
     setInput(newText)
+    persistDraft(newText)
     setMentionOpen(false)
     setMentionQuery('')
     setMentions((prev) => (prev.some((m) => m.id === file.id) ? prev : [...prev, file]))

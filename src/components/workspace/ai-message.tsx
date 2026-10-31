@@ -170,6 +170,13 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert,
       <SyntaxHighlighter
         language={language || 'text'}
         style={isDark ? oneDark : oneLight}
+        showLineNumbers
+        lineNumberStyle={{
+          color: isDark ? '#6b6a66' : '#c8c6c0',
+          minWidth: '2.4em',
+          paddingRight: '10px',
+          userSelect: 'none',
+        }}
         customStyle={{
           margin: 0,
           padding: '12px 14px',
