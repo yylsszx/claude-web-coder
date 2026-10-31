@@ -14,7 +14,7 @@ import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
 import type { Command, ViewUpdate } from '@codemirror/view'
 import { EditorSelection, Prec } from '@codemirror/state'
-import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { cursorMatchingBracket, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -32,6 +32,7 @@ import {
   Code,
   Columns2,
   Copy,
+  Download,
   FileCode2,
   Heading2,
   Italic,
@@ -715,7 +716,9 @@ export function CodeEditor({
   const extensions = useMemo<Extension[]>(() => {
     // 自定义键位：Ctrl/⌘ + D 复制行/选区，Alt + ↑/↓ 上下移动行块，Ctrl/⌘ + Shift + K 删行。
     // Prec.high 使其先于 basicSetup 内置 keymap：searchKeymap 的 Mod-d 是多光标 selectNextOccurrence，
-    // 不提升则 Ctrl+D 被它抢占（单光标时选中一个词并吞掉事件），复制行永远轮不到
+    // 不提升则 Ctrl+D 被它抢占（单光标时选中一个词并吞掉事件），复制行永远轮不到。
+    // Mod-Shift-\ 匹配括号跳转：显式注册而非依赖 defaultKeymap —— Shift 与 \ 组合键在
+    // 美式布局下 event.key 是 |，内置键名的匹配可能落空，双写两种键名保证生效
     const base: Extension[] = [
       search(),
       Prec.high(
@@ -724,6 +727,8 @@ export function CodeEditor({
           { key: 'Alt-ArrowUp', run: moveLinesUp },
           { key: 'Alt-ArrowDown', run: moveLinesDown },
           { key: 'Shift-Mod-k', run: deleteLines },
+          { key: 'Mod-Shift-\\', run: cursorMatchingBracket },
+          { key: 'Mod-Shift-|', run: cursorMatchingBracket },
         ]),
       ),
       keymap.of(searchKeymap),
@@ -957,6 +962,26 @@ export function CodeEditor({
             <Redo2 className="h-3 w-3" />
           </button>
         </div>
+        {/* 下载当前文件（含未保存的修改，file.content 与编辑器实时同步） */}
+        <button
+          type="button"
+          onClick={() => {
+            const blob = new Blob([file.content], { type: 'text/plain;charset=utf-8' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = file.path.split('/').pop() || 'file.txt'
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            setTimeout(() => URL.revokeObjectURL(url), 1000)
+          }}
+          title="下载当前文件（含未保存的修改）"
+          aria-label="下载当前文件"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        >
+          <Download className="h-3 w-3" />
+        </button>
         {/* 显示偏好：字号调节 + 自动换行开关 */}
         <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
           <button

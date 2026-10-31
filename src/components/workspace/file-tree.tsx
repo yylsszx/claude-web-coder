@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import {
+  ChevronsDownUp,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -212,6 +213,16 @@ export function FileTree({
   const FILE_ID_TYPE = 'application/cw-file-id'
 
   const tree = useMemo(() => buildTree(files), [files])
+
+  /** 树里是否有目录节点：决定「全部折叠」按钮是否可用 */
+  const hasFolders = useMemo(() => {
+    const walk = (nodes: TreeNode[]): boolean =>
+      nodes.some((n) => n.isFolder || walk(n.children))
+    return walk(tree)
+  }, [tree])
+
+  /** 全部折叠：清空展开记录（localStorage 同步清空，刷新后保持折叠态） */
+  const collapseAll = () => writeExpanded(new Set<string>())
 
   /** 复制路径到剪贴板（文件路径 / 目录前缀通用，toast 反馈避免无感知） */
   const handleCopyPath = async (path: string) => {
@@ -467,6 +478,17 @@ export function FileTree({
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="font-claude-serif text-[15px] font-semibold text-foreground">文件</h2>
         <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            disabled={!hasFolders || expanded.size === 0}
+            onClick={collapseAll}
+            aria-label="全部折叠"
+            title="全部折叠目录"
+          >
+            <ChevronsDownUp className="h-4 w-4 text-muted-foreground" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
