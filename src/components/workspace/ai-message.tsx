@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useTheme } from 'next-themes'
+import { useMounted } from '@/hooks/use-mounted'
 import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { copyTextToClipboard } from '@/lib/utils'
@@ -24,8 +25,10 @@ const COLLAPSE_LINES = 28
 function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  // 主题语法高亮仅在客户端挂载后跟随 resolvedTheme，避免 SSR 与深色客户端 inline style hydration mismatch
+  const mounted = useMounted()
   const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme === 'dark'
+  const isDark = mounted && resolvedTheme === 'dark'
   const lines = useMemo(() => code.split('\n'), [code])
   const collapsible = lines.length > COLLAPSE_LINES
   const shownCode = collapsible && !expanded ? lines.slice(0, COLLAPSE_LINES).join('\n') : code

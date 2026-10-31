@@ -46,6 +46,7 @@ import {
 import { AiMessage } from '@/components/workspace/ai-message'
 import { copyTextToClipboard } from '@/lib/utils'
 import type { ChatMsg, FileMeta, SessionMeta } from '@/lib/types'
+import { useMounted } from '@/hooks/use-mounted'
 
 interface ChatPanelProps {
   messages: ChatMsg[]
@@ -105,6 +106,8 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // 时间戳等依赖客户端时钟/时区的内容仅在挂载后渲染，避免 SSR hydration mismatch
+  const mounted = useMounted()
   // 当前文件是否作为上下文附加给 AI（切换文件时自动重新附加）
   const [fileAttached, setFileAttached] = useState(true)
   const [lastFilePath, setLastFilePath] = useState<string | null>(activeFilePath)
@@ -153,6 +156,31 @@ export function ChatPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, loading, messages[messages.length - 1]?.content])
+
+  /** 输入框随内容自动增高（上限 200px，超出内部滚动），发送清空后自动回落 */
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [input])
+
+  /** 消息时间：今天显示「今天 HH:MM」，今年显示「M月D日 HH:MM」，更早带年份 */
+  const formatMsgTime = (iso: string) => {
+    const t = new Date(iso)
+    if (Number.isNaN(t.getTime())) return ''
+    const now = new Date()
+    const hm = t.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+    if (
+      t.getFullYear() === now.getFullYear() &&
+      t.getMonth() === now.getMonth() &&
+      t.getDate() === now.getDate()
+    ) {
+      return `今天 ${hm}`
+    }
+    const y = t.getFullYear() === now.getFullYear() ? '' : `${t.getFullYear()}年`
+    return `${y}${t.getMonth() + 1}月${t.getDate()}日 ${hm}`
+  }
 
   /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件）；@ 引用随消息一并发出 */
   const send = (text: string, forceIncludeFile?: boolean) => {
@@ -611,7 +639,13 @@ export function ChatPanel({
             </div>
             {/* 悬浮操作行：AI 回复复制 + 重新生成（仅最后一条）；用户消息编辑（搜索过滤态下隐藏，索引已失真） */}
             {!searching && (msg.role === 'assistant' && !isStreaming(msg.id) ? (
-              <div className="ml-[38px] mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+              <div className="ml-[38px] mt-1 flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100">
+                <span
+                  className="mr-1 shrink-0 text-[10.5px] text-muted-foreground/80"
+                  title={mounted ? new Date(msg.createdAt).toLocaleString('zh-CN') : undefined}
+                >
+                  {mounted ? formatMsgTime(msg.createdAt) : ''}
+                </span>
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
                   onClick={() => void copyMessage(msg)}
@@ -641,7 +675,13 @@ export function ChatPanel({
                 )}
               </div>
             ) : msg.role === 'user' && editingId !== msg.id && canEdit(msg) ? (
-              <div className="ml-[38px] mt-1 flex items-center opacity-0 transition-opacity group-hover/msg:opacity-100">
+              <div className="ml-[38px] mt-1 flex items-center opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100">
+                <span
+                  className="mr-1 shrink-0 text-[10.5px] text-muted-foreground/80"
+                  title={mounted ? new Date(msg.createdAt).toLocaleString('zh-CN') : undefined}
+                >
+                  {mounted ? formatMsgTime(msg.createdAt) : ''}
+                </span>
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
                   onClick={() => startEdit(msg)}
@@ -778,7 +818,7 @@ export function ChatPanel({
                 ? `询问 AI，或让它修改 ${activeFilePath}…（@ 引用文件，Enter 发送）`
                 : '向 AI 描述你的需求…（输入 @ 引用文件作为上下文）'
             }
-            className="min-h-[72px] resize-none border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
+            className="max-h-[200px] min-h-[72px] resize-none overflow-y-auto border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
           />
           {loading ? (
             <Button

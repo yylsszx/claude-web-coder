@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
+import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun } from 'lucide-react'
 import {
@@ -32,6 +33,8 @@ export default function WorkspacePage() {
   const { toast } = useToast()
   const isMobile = useIsMobile()
   const { resolvedTheme, setTheme } = useTheme()
+  // 主题图标/提示语仅在客户端挂载后根据 resolvedTheme 渲染，避免 SSR hydration mismatch
+  const themeMounted = useMounted()
 
   // ===== 文件与标签页状态 =====
   const [files, setFiles] = useState<FileMeta[]>([])
@@ -1123,10 +1126,10 @@ export default function WorkspacePage() {
         <button
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-          title={resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+          title={themeMounted && resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
           aria-label="切换深浅色模式"
         >
-          {resolvedTheme === 'dark' ? (
+          {themeMounted && resolvedTheme === 'dark' ? (
             <Sun className="h-4 w-4" />
           ) : (
             <Moon className="h-4 w-4" />
