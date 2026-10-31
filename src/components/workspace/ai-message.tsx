@@ -19,7 +19,7 @@ interface CodeBlockProps {
 /** 超过此行数的代码块默认折叠 */
 const COLLAPSE_LINES = 28
 
-/** 带操作栏的代码块：复制 / 应用到当前文件 / 存为新文件；超长自动折叠 */
+/** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件；超长自动折叠 */
 function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -60,7 +60,7 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlo
               disabled={applyDisabled}
             >
               <FileInput className="h-3 w-3" />
-              应用到当前文件
+              应用到文件…
             </Button>
           )}
           {onSaveAs && (

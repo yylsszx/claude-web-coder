@@ -285,6 +285,30 @@ export function ChatPanel({
   /** 用户消息可编辑：非流式中、非临时 ID（临时 ID 只在生成中断后出现） */
   const canEdit = (msg: ChatMsg) => !loading && !msg.id.startsWith('tmp-')
 
+  /** 用户消息中的 @ 文件路径渲染为高亮 chip（@ 前不能是字母/数字/@，避免误判邮箱等） */
+  const renderMentions = (text: string): React.ReactNode => {
+    const re = /(^|[^A-Za-z0-9_@])(@[\w./\-]+)/g
+    const parts: React.ReactNode[] = []
+    let last = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      // 前缀（行首或分隔符）保持普通文本
+      const start = m.index + m[1].length
+      if (start > last) parts.push(text.slice(last, start))
+      parts.push(
+        <span
+          key={parts.length}
+          className="rounded bg-clay/10 px-1 py-0.5 font-mono text-[12px] text-clay"
+        >
+          {m[2]}
+        </span>
+      )
+      last = start + m[2].length
+    }
+    if (last < text.length) parts.push(text.slice(last))
+    return parts
+  }
+
   /** 搜索态下把关键词高亮（仅用户消息纯文本部分） */
   const highlightText = (text: string, query: string): React.ReactNode => {
     if (!query) return text
@@ -533,7 +557,7 @@ export function ChatPanel({
                         : msg.content
                     }
                     onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
-                    applyDisabled={!activeFilePath}
+                    applyDisabled={files.length === 0}
                     onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
                   />
                 ) : editingId === msg.id ? (
@@ -578,7 +602,9 @@ export function ChatPanel({
                   </div>
                 ) : (
                   <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">
-                    {highlightText(msg.content, searching ? searchQuery.trim() : '')}
+                    {searching
+                      ? highlightText(msg.content, searchQuery.trim())
+                      : renderMentions(msg.content)}
                   </p>
                 )}
               </div>

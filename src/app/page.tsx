@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2 } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -12,6 +12,7 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToastAction } from '@/components/ui/toast'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
@@ -20,6 +21,7 @@ import { ChatPanel } from '@/components/workspace/chat-panel'
 import { GlobalSearch } from '@/components/workspace/global-search'
 import { DiffDialog } from '@/components/workspace/diff-dialog'
 import { SaveAsDialog, suggestFileName } from '@/components/workspace/save-as-dialog'
+import { ApplyTargetDialog } from '@/components/workspace/apply-target-dialog'
 import { ShortcutsDialog } from '@/components/workspace/shortcuts-dialog'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
@@ -50,13 +52,17 @@ export default function WorkspacePage() {
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
   const [mobileTab, setMobileTab] = useState('chat')
 
-  // ===== 应用代码（diff 预览） / 存为新文件 / 拖拽导入 =====
-  const [diffState, setDiffState] = useState<{ path: string; original: string; code: string } | null>(null)
+  // ===== 应用代码（目标选择 → diff 预览） / 存为新文件 / 拖拽导入 =====
+  const [applyTargetOpen, setApplyTargetOpen] = useState(false)
+  const [pendingApplyCode, setPendingApplyCode] = useState('')
+  const [diffState, setDiffState] = useState<{ file: FileFull; original: string; code: string } | null>(null)
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
   // 快捷键帮助面板（Ctrl/⌘ + /）
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // 最近一次 @ 引用的文件 ID（供应用目标对话框展示）
+  const [recentMentionIds, setRecentMentionIds] = useState<string[]>([])
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -74,6 +80,8 @@ export default function WorkspacePage() {
   const abortRef = useRef<AbortController | null>(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+  // 应用代码前的内容快照（供一键撤销）
+  const undoRef = useRef<{ fileId: string; prevContent: string } | null>(null)
 
   // ===== 会话 =====
   const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
@@ -624,6 +632,7 @@ export default function WorkspacePage() {
   /** 发送消息（普通模式）；includeFile 由附件 chip 控制，mentionIds 为 @ 引用文件 */
   const sendMessage = useCallback(
     (message: string, includeFile = true, mentionIds?: string[]) => {
+      if (mentionIds?.length) setRecentMentionIds(mentionIds)
       void runStream({ message, includeFile, mentionIds })
     },
     [runStream]
@@ -697,43 +706,105 @@ export default function WorkspacePage() {
     }
   }, [refreshSessions, toast])
 
-  /** 把 AI 代码块应用到当前标签 */
-  const applyCode = useCallback(
-    (code: string) => {
-      const tab = activeTabRef.current
-      if (!tab) return
-      setOpenTabs((prev) =>
-        prev.map((t) => (t.id === tab.id ? { ...t, content: code } : t))
-      )
-      setTabStates((prev) => ({ ...prev, [tab.id]: 'dirty' }))
-      scheduleSave(tab.id, code)
+  /** 把 AI 代码写入目标文件（供撤销）；目标 tab 未打开时直接创建 tab */
+  const applyToTarget = useCallback(
+    (target: FileFull & { prevContent: string }, code: string) => {
+      undoRef.current = { fileId: target.id, prevContent: target.prevContent }
+      setOpenTabs((prev) => {
+        const exists = prev.some((t) => t.id === target.id)
+        if (!exists) {
+          return [
+            ...prev,
+            {
+              id: target.id,
+              path: target.path,
+              language: target.language,
+              content: code,
+              createdAt: target.createdAt,
+              updatedAt: target.updatedAt,
+            },
+          ]
+        }
+        return prev.map((t) => (t.id === target.id ? { ...t, content: code } : t))
+      })
+      setTabStates((prev) => ({ ...prev, [target.id]: 'dirty' }))
+      scheduleSave(target.id, code)
+      setActiveTabId(target.id)
       toast({
-        title: '已应用到编辑器',
-        description: '代码已写入当前文件，即将自动保存',
+        title: '已应用到文件',
+        description: target.path,
+        action: (
+          <ToastAction
+            altText="撤销本次应用"
+            className="gap-1 text-clay hover:text-clay"
+            onClick={() => {
+              const snap = undoRef.current
+              if (!snap) return
+              undoRef.current = null
+              setOpenTabs((prev) =>
+                prev.map((t) => (t.id === snap.fileId ? { ...t, content: snap.prevContent } : t))
+              )
+              setTabStates((prev) => ({ ...prev, [snap.fileId]: 'dirty' }))
+              scheduleSave(snap.fileId, snap.prevContent)
+              toast({ title: '已撤销', description: '文件已恢复为应用前的内容' })
+            }}
+          >
+            <Undo2 className="h-3 w-3" />
+            撤销
+          </ToastAction>
+        ),
       })
     },
     [scheduleSave, toast]
   )
 
-  /** 点击「应用到当前文件」→ 先打开 diff 预览确认 */
-  const openDiff = useCallback(
+  /** 点击「应用到文件…」→ 打开目标选择对话框 */
+  const openApplyTarget = useCallback(
     (code: string) => {
-      const tab = activeTabRef.current
-      if (!tab) {
-        toast({ title: '请先打开一个文件', variant: 'destructive' })
+      if (!files.length) {
+        toast({ title: '工作区还没有文件', variant: 'destructive' })
         return
       }
-      setDiffState({ path: tab.path, original: tab.content, code })
+      setPendingApplyCode(code)
+      setApplyTargetOpen(true)
     },
-    [toast]
+    [files.length, toast]
+  )
+
+  /** 选中目标文件：拉取内容后进入 diff 预览（未打开的文件也支持） */
+  const pickApplyTarget = useCallback(
+    async (fileId: string) => {
+      setApplyTargetOpen(false)
+      try {
+        const res = await fetch(`/api/files/${fileId}`)
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '读取文件失败')
+        const f: FileFull = data.file
+        setDiffState({
+          file: f,
+          original: f.content,
+          code: pendingApplyCode,
+        })
+      } catch (error) {
+        toast({
+          title: '读取文件失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [pendingApplyCode, toast]
   )
 
   /** diff 确认后真正应用并关闭 */
   const confirmDiff = useCallback(() => {
     if (!diffState) return
-    applyCode(diffState.code)
+    applyToTarget(
+      { ...diffState.file, prevContent: diffState.original },
+      diffState.code
+    )
     setDiffState(null)
-  }, [applyCode, diffState])
+  }, [applyToTarget, diffState])
 
   /** 点击「存为新文件」→ 打开命名对话框 */
   const openSaveAs = useCallback((code: string, language: string) => {
@@ -934,7 +1005,7 @@ export default function WorkspacePage() {
       onSend={sendMessage}
       onStop={stopGeneration}
       onClear={clearChat}
-      onApplyCode={openDiff}
+      onApplyCode={openApplyTarget}
       onRegenerate={() => void regenerateLast()}
       onSaveAsCode={openSaveAs}
       onExportChat={exportChat}
@@ -977,11 +1048,23 @@ export default function WorkspacePage() {
         onOpenChange={setSearchOpen}
         onJump={(fileId, line) => void jumpToLine(fileId, line)}
       />
+      {/* 应用目标选择（代码块「应用到文件…」） */}
+      <ApplyTargetDialog
+        open={applyTargetOpen}
+        onOpenChange={setApplyTargetOpen}
+        openTabs={openTabs.map((t) => ({ id: t.id, path: t.path }))}
+        activeTabId={activeTabId}
+        recentMentions={recentMentionIds
+          .map((id) => files.find((f) => f.id === id))
+          .filter((f): f is FileMeta => !!f)}
+        files={files}
+        onPick={(fileId) => void pickApplyTarget(fileId)}
+      />
       {/* 应用代码前的 diff 预览确认 */}
       <DiffDialog
         open={!!diffState}
         onOpenChange={(open) => !open && setDiffState(null)}
-        filePath={diffState?.path ?? ''}
+        filePath={diffState?.file.path ?? ''}
         original={diffState?.original ?? ''}
         incoming={diffState?.code ?? ''}
         onConfirm={confirmDiff}
