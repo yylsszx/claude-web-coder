@@ -735,6 +735,35 @@ export default function WorkspacePage() {
     [openFile, refreshFiles, toast]
   )
 
+  /** 新建文件夹：写入 <path>/.gitkeep 占位文件（目录由路径前缀隐式推导），不自动打开标签 */
+  const createFolder = useCallback(
+    async (path: string): Promise<boolean> => {
+      const clean = path.trim().replace(/\/+$/, '')
+      if (!clean) return false
+      const keepPath = `${clean}/.gitkeep`
+      try {
+        const res = await fetch('/api/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: keepPath }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '创建失败')
+        await refreshFiles()
+        toast({ title: '文件夹已创建', description: `${clean}（含 .gitkeep 占位文件）` })
+        return true
+      } catch (error) {
+        toast({
+          title: '创建文件夹失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+        return false
+      }
+    },
+    [refreshFiles, toast]
+  )
+
   const renameFile = useCallback(
     async (id: string, newPath: string): Promise<boolean> => {
       try {
@@ -1092,6 +1121,31 @@ export default function WorkspacePage() {
       await runStream({ message: trimmed, editMessageId: messageId })
     },
     [runStream]
+  )
+
+  /** 删除单条消息（生成中 / 临时消息由 chat-panel 侧守卫禁删） */
+  const deleteMessage = useCallback(
+    async (messageId: string) => {
+      try {
+        const res = await fetch(`/api/messages/${encodeURIComponent(messageId)}`, {
+          method: 'DELETE',
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error ?? '删除失败')
+        }
+        setMessages((prev) => prev.filter((m) => m.id !== messageId))
+        void refreshSessions() // 摘要与消息数即时反映
+        toast({ title: '已删除该条消息' })
+      } catch (error) {
+        toast({
+          title: '删除消息失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [toast]
   )
 
   /** 编辑器选中代码 → AI 快捷处理（解释 / 优化 / 修复） */
@@ -1464,6 +1518,7 @@ export default function WorkspacePage() {
         .map(([id]) => id)}
       onOpen={openFile}
       onCreate={createFile}
+      onCreateFolder={createFolder}
       onRename={renameFile}
       onDelete={deleteFile}
       onMoveFile={moveFile}
@@ -1551,6 +1606,7 @@ export default function WorkspacePage() {
       onInsertCode={insertCodeToEditor}
       onExportChat={exportChat}
       onEditResend={(id, content) => void editAndResend(id, content)}
+      onDeleteMessage={(id) => void deleteMessage(id)}
       onToggleTaskContent={(id, content, prev) => void toggleTaskContent(id, content, prev)}
     />
   )

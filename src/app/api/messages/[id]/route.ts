@@ -26,3 +26,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: '更新消息失败' }, { status: 500 })
   }
 }
+
+/** DELETE /api/messages/[id] —— 删除单条消息（会话其余消息不受影响） */
+export async function DELETE(_request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params
+
+    const existing = await db.chatMessage.findUnique({ where: { id } })
+    if (!existing) {
+      return NextResponse.json({ error: '消息不存在' }, { status: 404 })
+    }
+
+    await db.chatMessage.delete({ where: { id } })
+    // touch 会话 updatedAt：会话列表摘要与排序即时反映删除后的状态
+    await db.chatSession.update({
+      where: { id: existing.sessionId },
+      data: { updatedAt: new Date() },
+    })
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    console.error('DELETE /api/messages/[id] failed:', error)
+    return NextResponse.json({ error: '删除消息失败' }, { status: 500 })
+  }
+}

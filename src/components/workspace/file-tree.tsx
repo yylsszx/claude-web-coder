@@ -10,6 +10,7 @@ import {
   FileText,
   FileJson,
   FilePlus2,
+  FolderPlus,
   FolderOpen,
   Import,
   Loader2,
@@ -161,6 +162,8 @@ interface FileTreeProps {
   dirtyIds?: string[]
   onOpen: (id: string) => void
   onCreate: (path: string) => Promise<boolean>
+  /** 新建文件夹（写入 <path>/.gitkeep 占位文件，不自动打开标签） */
+  onCreateFolder: (path: string) => Promise<boolean>
   onRename: (id: string, newPath: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void>
   /** 拖拽移动文件到目录（拼 newPath 走重命名链路） */
@@ -177,6 +180,7 @@ export function FileTree({
   dirtyIds = [],
   onOpen,
   onCreate,
+  onCreateFolder,
   onRename,
   onDelete,
   onMoveFile,
@@ -188,6 +192,8 @@ export function FileTree({
   // 目录展开状态：localStorage 外部存储，刷新后保持；SSR 渲染空快照避免 hydration 不一致
   const expanded = useSyncExternalStore(subscribeExpanded, readExpanded, () => EMPTY_FOLDERS)
   const [createOpen, setCreateOpen] = useState(false)
+  // 新建对话框模式：file = 新建文件（自动打开标签）；folder = 新建文件夹（提交时补 .gitkeep）
+  const [createMode, setCreateMode] = useState<'file' | 'folder'>('file')
   const [newPath, setNewPath] = useState('')
   const [creating, setCreating] = useState(false)
   const [renameTarget, setRenameTarget] = useState<FileMeta | null>(null)
@@ -244,7 +250,10 @@ export function FileTree({
   const handleCreate = async () => {
     if (!newPath.trim()) return
     setCreating(true)
-    const ok = await onCreate(newPath.trim())
+    const ok =
+      createMode === 'folder'
+        ? await onCreateFolder(newPath.trim())
+        : await onCreate(newPath.trim())
     setCreating(false)
     if (ok) {
       setCreateOpen(false)
@@ -322,11 +331,21 @@ export function FileTree({
               <ContextMenuContent className="w-48">
                 <ContextMenuItem
                   onSelect={() => {
+                    setCreateMode('file')
                     setNewPath(`${dirPath}/`)
                     setCreateOpen(true)
                   }}
                 >
                   <FilePlus2 className="h-3.5 w-3.5" /> 在此目录新建文件
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() => {
+                    setCreateMode('folder')
+                    setNewPath(`${dirPath}/`)
+                    setCreateOpen(true)
+                  }}
+                >
+                  <FolderPlus className="h-3.5 w-3.5" /> 在此目录新建文件夹
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={() => void handleCopyPath(dirPath)}>
                   <Copy className="h-3.5 w-3.5" /> 复制目录路径
@@ -503,10 +522,27 @@ export function FileTree({
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              setCreateMode('file')
+              setCreateOpen(true)
+            }}
             aria-label="新建文件"
+            title="新建文件"
           >
             <FilePlus2 className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => {
+              setCreateMode('folder')
+              setCreateOpen(true)
+            }}
+            aria-label="新建文件夹"
+            title="新建文件夹（写入 .gitkeep 占位文件）"
+          >
+            <FolderPlus className="h-4 w-4 text-muted-foreground" />
           </Button>
         </div>
       </div>
@@ -523,19 +559,29 @@ export function FileTree({
         )}
       </div>
 
-      {/* 新建文件对话框 */}
+      {/* 新建文件 / 文件夹对话框 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-claude-serif">新建文件</DialogTitle>
+            <DialogTitle className="font-claude-serif">
+              {createMode === 'folder' ? '新建文件夹' : '新建文件'}
+            </DialogTitle>
             <DialogDescription>
-              输入文件路径，支持目录（如 <code>src/utils/helpers.ts</code>）
+              {createMode === 'folder' ? (
+                <>
+                  输入文件夹路径（如 <code>src/components</code>），写入 .gitkeep 占位文件
+                </>
+              ) : (
+                <>
+                  输入文件路径，支持目录（如 <code>src/utils/helpers.ts</code>）
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <Input
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
-            placeholder="src/utils/helpers.ts"
+            placeholder={createMode === 'folder' ? 'src/components' : 'src/utils/helpers.ts'}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             autoFocus
           />

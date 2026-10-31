@@ -88,6 +88,8 @@ interface ChatPanelProps {
   onExportChat: () => void
   /** 编辑历史用户消息并重发（服务端丢弃其后所有消息） */
   onEditResend: (messageId: string, newContent: string) => void
+  /** 删除单条消息（两步确认后调用；生成中 / 临时消息由内部守卫禁删） */
+  onDeleteMessage: (messageId: string) => void
   /** 勾选 AI 回复任务列表项：乐观更新 + 持久化（失败由上层回滚并提示） */
   onToggleTaskContent?: (msgId: string, content: string, prevContent: string) => void
 }
@@ -167,6 +169,7 @@ export function ChatPanel({
   onExportChat,
   onToggleTaskContent,
   onEditResend,
+  onDeleteMessage,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
@@ -210,6 +213,30 @@ export function ChatPanel({
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
+  // 单条消息删除两步确认：点一次变「确认删除」，2.5 秒内再点才执行，超时自动还原
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const confirmDeleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 进入待确认态（换一条时自动重置计时）；再次点击同一条才真正删除 */
+  const askDeleteMessage = (id: string) => {
+    setConfirmDeleteId(id)
+    if (confirmDeleteTimerRef.current) clearTimeout(confirmDeleteTimerRef.current)
+    confirmDeleteTimerRef.current = setTimeout(() => setConfirmDeleteId(null), 2500)
+  }
+  /** 确认删除并清理计时器 */
+  const confirmDeleteMessage = (id: string) => {
+    if (confirmDeleteTimerRef.current) {
+      clearTimeout(confirmDeleteTimerRef.current)
+      confirmDeleteTimerRef.current = null
+    }
+    setConfirmDeleteId(null)
+    onDeleteMessage(id)
+  }
+  useEffect(
+    () => () => {
+      if (confirmDeleteTimerRef.current) clearTimeout(confirmDeleteTimerRef.current)
+    },
+    []
+  )
 
   // ===== 流式生成实时计时 =====
   const [elapsedSec, setElapsedSec] = useState<number | null>(null)
@@ -714,6 +741,28 @@ export function ChatPanel({
 
   /** 用户消息可编辑：非流式中、非临时 ID（临时 ID 只在生成中断后出现） */
   const canEdit = (msg: ChatMsg) => !loading && !msg.id.startsWith('tmp-')
+
+  /** 单条消息删除按钮：两步确认（点一次变红色「确认删除」，2.5 秒内不再点自动还原；同 canEdit 守卫：生成中 / 临时消息不可删） */
+  const renderDeleteBtn = (msg: ChatMsg) =>
+    confirmDeleteId === msg.id ? (
+      <button
+        className="flex items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive transition-colors hover:bg-destructive/20"
+        onClick={() => confirmDeleteMessage(msg.id)}
+        title="再次点击确认删除（不可恢复）"
+      >
+        <Trash2 className="h-3 w-3" />
+        确认删除
+      </button>
+    ) : (
+      <button
+        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+        onClick={() => askDeleteMessage(msg.id)}
+        title="删除此条消息"
+      >
+        <Trash2 className="h-3 w-3" />
+        删除
+      </button>
+    )
 
   /** 用户消息中的 @ 文件路径渲染为高亮 chip（@ 前不能是字母/数字/@，避免误判邮箱等） */
   const renderMentions = (text: string): React.ReactNode => {
@@ -1282,6 +1331,7 @@ export function ChatPanel({
                     重新生成
                   </button>
                 )}
+                {canEdit(msg) && renderDeleteBtn(msg)}
               </div>
             ) : msg.role === 'user' && editingId !== msg.id && canEdit(msg) ? (
               <div className="ml-[38px] mt-1 flex items-center opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100">
@@ -1316,6 +1366,7 @@ export function ChatPanel({
                     </>
                   )}
                 </button>
+                {renderDeleteBtn(msg)}
               </div>
             ) : null)}
           </div>
