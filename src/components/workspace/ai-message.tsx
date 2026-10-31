@@ -6,7 +6,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
-import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2, SquarePen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { copyTextToClipboard } from '@/lib/utils'
 
@@ -16,13 +16,16 @@ interface CodeBlockProps {
   onApply?: (code: string) => void
   applyDisabled?: boolean
   onSaveAs?: (code: string, language: string) => void
+  /** 插入到编辑器当前光标位置 */
+  onInsert?: (code: string) => void
+  insertDisabled?: boolean
 }
 
 /** 超过此行数的代码块默认折叠 */
 const COLLAPSE_LINES = 28
 
 /** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件；超长自动折叠 */
-function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlockProps) {
+function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs, onInsert, insertDisabled }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
   // 主题语法高亮仅在客户端挂载后跟随 resolvedTheme，避免 SSR 与深色客户端 inline style hydration mismatch
@@ -69,6 +72,19 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlo
             >
               <FileInput className="h-3 w-3" />
               应用到文件…
+            </Button>
+          )}
+          {onInsert && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 px-0 text-muted-foreground"
+              onClick={() => onInsert(code)}
+              disabled={insertDisabled}
+              aria-label="插入到当前文件光标处"
+              title={insertDisabled ? '请先在编辑器中打开一个文件' : '插入到当前文件光标处'}
+            >
+              <SquarePen className="h-3 w-3" />
             </Button>
           )}
           {onSaveAs && (
@@ -126,6 +142,10 @@ interface AiMessageProps {
   applyDisabled?: boolean
   /** 存为新文件（代码块操作栏） */
   onSaveAsCode?: (code: string, language: string) => void
+  /** 插入到编辑器当前光标位置 */
+  onInsertCode?: (code: string) => void
+  /** 无打开文件时禁用插入 */
+  insertDisabled?: boolean
 }
 
 /** 渲染 AI 回复（Markdown + 代码块） */
@@ -134,6 +154,8 @@ export const AiMessage = memo(function AiMessage({
   onApplyCode,
   applyDisabled,
   onSaveAsCode,
+  onInsertCode,
+  insertDisabled,
 }: AiMessageProps) {
   return (
     <div className="ai-markdown">
@@ -151,6 +173,8 @@ export const AiMessage = memo(function AiMessage({
                   onApply={onApplyCode}
                   applyDisabled={applyDisabled}
                   onSaveAs={onSaveAsCode}
+                  onInsert={onInsertCode}
+                  insertDisabled={insertDisabled}
                 />
               )
             }

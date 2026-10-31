@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { useTheme } from 'next-themes'
-import { EditorView } from '@codemirror/view'
+import { EditorView, keymap } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import type { ViewUpdate } from '@codemirror/view'
+import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { html } from '@codemirror/lang-html'
@@ -23,6 +24,7 @@ import {
   Pencil,
   PencilLine,
   Sparkles,
+  SquarePen,
   X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -116,6 +118,8 @@ interface CodeEditorProps {
   onAskSelection?: (action: SelectionAction, sel: SelectionPayload) => void
   /** AI 正在生成时禁用选区快捷操作 */
   askDisabled?: boolean
+  /** 注册「插入到光标位置」函数（供 AI 代码块调用） */
+  registerInsert?: (fn: (text: string) => void) => void
 }
 
 export function CodeEditor({
@@ -129,6 +133,7 @@ export function CodeEditor({
   jumpTarget,
   onAskSelection,
   askDisabled,
+  registerInsert,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const editorViewRef = useRef<EditorView | null>(null)
@@ -261,11 +266,46 @@ export function CodeEditor({
     [selState, file, onAskSelection, askDisabled]
   )
 
+  /** 在当前光标后插入文本并滚动可见 */
+  const insertAtCursor = useCallback((text: string) => {
+    const view = editorViewRef.current
+    if (!view) return
+    try {
+      const pos = view.state.selection.main.to
+      view.dispatch({
+        changes: { from: pos, insert: text },
+        selection: { anchor: pos + text.length },
+        effects: EditorView.scrollIntoView(pos + text.length, { y: 'nearest' }),
+      })
+      view.focus()
+    } catch {
+      /* 视图已销毁（如预览模式卸载）时忽略 */
+    }
+  }, [])
+
+  // 注册「插入到光标位置」：Markdown 预览模式下先切回编辑模式再插入
+  const mdViewRef = useRef(mdView)
+  useEffect(() => {
+    mdViewRef.current = mdView
+  }, [mdView])
+  useEffect(() => {
+    if (!registerInsert) return
+    registerInsert((text: string) => {
+      if (mdViewRef.current === 'preview') {
+        setMdView('edit')
+        requestAnimationFrame(() => insertAtCursor(text))
+        return
+      }
+      insertAtCursor(text)
+    })
+  }, [registerInsert, insertAtCursor])
+
   const language = file?.language
   const extensions = useMemo<Extension[]>(() => {
-    if (!language) return []
+    const base: Extension[] = [search(), keymap.of(searchKeymap)]
+    if (!language) return base
     const factory = LANGUAGE_EXTENSIONS[language]
-    return factory ? [factory()] : []
+    return factory ? [factory(), ...base] : base
   }, [language])
 
   if (!file) {

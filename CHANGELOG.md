@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式。
 
+## [0.15.0] - 2026-11-01
+
+### 新增
+- **文件树目录折叠持久化**：目录展开/折叠状态保存到 localStorage（`useSyncExternalStore` 外部存储模式），刷新后保持上次布局；SSR 快照渲染空集合规避 hydration 不一致，跨标签页 storage 事件同步
+- **编辑器内查找（Ctrl/⌘ + F）**：集成 @codemirror/search 查找面板——焦点在编辑器时 Ctrl/⌘ + F 打开查找/替换（支持大小写、正则、全词匹配与替换全部），Enter 逐个跳转命中行，Esc 关闭；与对话面板的会话内搜索（v0.14）按焦点自动分流，快捷键帮助已同步更新
+- **代码块「插入到光标位置」**：AI 代码块操作栏新增插入按钮（SquarePen 图标）——把代码插入当前打开文件的光标处并滚动定位、编辑器自动聚焦，Markdown 预览模式先切回编辑模式再插入，移动端插入后自动切到编辑器 Tab；未打开文件时按钮禁用并提示
+
+### 自测
+- ESLint 0 错误 0 警告；src 目录 tsc 无类型错误（文件树状态重构为 useSyncExternalStore 外部存储，规避 effect 级联渲染）
+- Agent Browser 端到端验证：展开 examples → localStorage 写入 `["examples/"]` → 刷新后保持展开 → 折叠后刷新保持收起；编辑器 Ctrl+F 打开查找面板、搜「欢迎」Enter 跳转命中行、Esc 关闭；插入按钮点击后编辑器内容 204 → 2081 字符、插入点即光标位置、编辑器自动聚焦并自动保存；测试数据已还原（README 恢复原内容）；控制台与页面错误均为零
+
 ## [0.14.0] - 2026-11-01
 
 ### 新增

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -93,6 +93,51 @@ function fileIcon(language: string) {
   return FileCode
 }
 
+/**
+ * 目录展开状态作为外部存储（localStorage）：
+ * SSR 快照返回共享空集合，客户端读取缓存值，避免 hydration 不一致与级联渲染
+ */
+const EMPTY_FOLDERS: ReadonlySet<string> = new Set()
+let expandedCache: ReadonlySet<string> = EMPTY_FOLDERS
+let expandedDirty = true
+const expandedListeners = new Set<() => void>()
+
+function readExpanded(): ReadonlySet<string> {
+  if (!expandedDirty) return expandedCache
+  try {
+    const raw = localStorage.getItem('file-tree-expanded')
+    expandedCache = raw ? new Set(JSON.parse(raw) as string[]) : EMPTY_FOLDERS
+  } catch {
+    expandedCache = EMPTY_FOLDERS
+  }
+  expandedDirty = false
+  return expandedCache
+}
+
+function subscribeExpanded(cb: () => void) {
+  expandedListeners.add(cb)
+  const onStorage = () => {
+    expandedDirty = true
+    cb()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    expandedListeners.delete(cb)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function writeExpanded(next: Set<string>) {
+  expandedCache = next
+  expandedDirty = false
+  try {
+    localStorage.setItem('file-tree-expanded', JSON.stringify([...next]))
+  } catch {
+    /* 存储不可用时静默降级 */
+  }
+  expandedListeners.forEach((l) => l())
+}
+
 interface FileTreeProps {
   files: FileMeta[]
   activeId: string | null
@@ -120,7 +165,8 @@ export function FileTree({
   onImportFiles,
   importingFiles,
 }: FileTreeProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // 目录展开状态：localStorage 外部存储，刷新后保持；SSR 渲染空快照避免 hydration 不一致
+  const expanded = useSyncExternalStore(subscribeExpanded, readExpanded, () => EMPTY_FOLDERS)
   const [createOpen, setCreateOpen] = useState(false)
   const [newPath, setNewPath] = useState('')
   const [creating, setCreating] = useState(false)
@@ -135,12 +181,10 @@ export function FileTree({
   const tree = useMemo(() => buildTree(files), [files])
 
   const toggleFolder = (path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
+    const next = new Set(expanded)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    writeExpanded(next)
   }
 
   const handleCreate = async () => {

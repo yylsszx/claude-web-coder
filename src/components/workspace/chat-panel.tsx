@@ -71,6 +71,8 @@ interface ChatPanelProps {
   onRegenerate: () => void
   /** 把代码块保存为新文件 */
   onSaveAsCode: (code: string, language: string) => void
+  /** 插入到编辑器当前光标位置（无打开文件时禁用） */
+  onInsertCode?: (code: string) => void
   /** 导出当前会话为 Markdown */
   onExportChat: () => void
   /** 编辑历史用户消息并重发（服务端丢弃其后所有消息） */
@@ -101,6 +103,7 @@ export function ChatPanel({
   onApplyCode,
   onRegenerate,
   onSaveAsCode,
+  onInsertCode,
   onExportChat,
   onEditResend,
 }: ChatPanelProps) {
@@ -668,6 +671,8 @@ export function ChatPanel({
                     onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
                     applyDisabled={files.length === 0}
                     onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
+                    onInsertCode={isStreaming(msg.id) ? undefined : onInsertCode}
+                    insertDisabled={!activeFilePath}
                   />
                 ) : editingId === msg.id ? (
                   /* 内联编辑用户消息 */

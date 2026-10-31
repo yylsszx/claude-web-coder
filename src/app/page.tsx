@@ -89,6 +89,8 @@ export default function WorkspacePage() {
   messagesRef.current = messages
   // 应用代码前的内容快照（供一键撤销）
   const undoRef = useRef<{ fileId: string; prevContent: string } | null>(null)
+  // 编辑器「插入到光标」函数注册表（由 CodeEditor 注册）
+  const insertToEditorRef = useRef<((text: string) => void) | null>(null)
 
   // ===== 会话 =====
   const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
@@ -966,6 +968,20 @@ export default function WorkspacePage() {
     [refreshFiles, toast]
   )
 
+  /** 注册编辑器插入函数（稳定标识，CodeEditor 挂载后调用） */
+  const registerEditorInsert = useCallback((fn: (text: string) => void) => {
+    insertToEditorRef.current = fn
+  }, [])
+
+  /** AI 代码块「插入到光标位置」：插入后移动端自动切到编辑器 Tab */
+  const insertCodeToEditor = useCallback(
+    (code: string) => {
+      insertToEditorRef.current?.(code)
+      if (isMobile) setMobileTab('editor')
+    },
+    [isMobile]
+  )
+
   // ===== 视图 =====
   const fileTreeView = (
     <FileTree
@@ -995,6 +1011,7 @@ export default function WorkspacePage() {
       jumpTarget={jumpTarget}
       onAskSelection={askAboutSelection}
       askDisabled={chatLoading}
+      registerInsert={registerEditorInsert}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -1026,6 +1043,7 @@ export default function WorkspacePage() {
       onApplyCode={openApplyTarget}
       onRegenerate={() => void regenerateLast()}
       onSaveAsCode={openSaveAs}
+      onInsertCode={insertCodeToEditor}
       onExportChat={exportChat}
       onEditResend={(id, content) => void editAndResend(id, content)}
     />
