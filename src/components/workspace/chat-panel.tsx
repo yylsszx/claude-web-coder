@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AtSign,
   Check,
   Copy,
   Download,
@@ -13,6 +14,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   SendHorizonal,
   Sparkles,
   Square,
@@ -43,21 +45,23 @@ import {
 } from '@/components/ui/alert-dialog'
 import { AiMessage } from '@/components/workspace/ai-message'
 import { copyTextToClipboard } from '@/lib/utils'
-import type { ChatMsg, SessionMeta } from '@/lib/types'
+import type { ChatMsg, FileMeta, SessionMeta } from '@/lib/types'
 
 interface ChatPanelProps {
   messages: ChatMsg[]
   loading: boolean
   streamingId: string | null
   activeFilePath: string | null
+  /** 工作区全部文件（供 @ 引用搜索） */
+  files: FileMeta[]
   sessions: SessionMeta[]
   activeSessionId: string | null
   onSwitchSession: (id: string) => void
   onCreateSession: () => void
   onRenameSession: (id: string, title: string) => Promise<boolean>
   onDeleteSession: (id: string) => void
-  /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI */
-  onSend: (message: string, includeFile: boolean) => void
+  /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件 */
+  onSend: (message: string, includeFile: boolean, mentionIds?: string[]) => void
   onStop: () => void
   onClear: () => void
   onApplyCode: (code: string) => void
@@ -82,6 +86,7 @@ export function ChatPanel({
   loading,
   streamingId,
   activeFilePath,
+  files,
   sessions,
   activeSessionId,
   onSwitchSession,
@@ -99,6 +104,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   // 当前文件是否作为上下文附加给 AI（切换文件时自动重新附加）
   const [fileAttached, setFileAttached] = useState(true)
   const [lastFilePath, setLastFilePath] = useState<string | null>(activeFilePath)
@@ -116,18 +122,51 @@ export function ChatPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
 
+  // ===== @ 文件引用 =====
+  const [mentions, setMentions] = useState<FileMeta[]>([])
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
+  const [mentionIndex, setMentionIndex] = useState(0)
+
+  const mentionMatches = useMemo(() => {
+    const q = mentionQuery.toLowerCase()
+    return files.filter((f) => f.path.toLowerCase().includes(q)).slice(0, 6)
+  }, [files, mentionQuery])
+
+  // 渲染期调整：匹配列表变化时把高亮索引拉回有效范围
+  if (mentionOpen && mentionIndex >= mentionMatches.length) {
+    setMentionIndex(0)
+  }
+
+  // ===== 会话内消息搜索 =====
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searching = searchQuery.trim().length > 0
+  const visibleMessages = useMemo(() => {
+    if (!searching) return messages
+    const q = searchQuery.trim().toLowerCase()
+    return messages.filter((m) => m.content.toLowerCase().includes(q))
+  }, [messages, searching, searchQuery])
+
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, loading, messages[messages.length - 1]?.content])
 
-  /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件） */
+  /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件）；@ 引用随消息一并发出 */
   const send = (text: string, forceIncludeFile?: boolean) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
-    onSend(trimmed, forceIncludeFile ?? (fileAttached && !!activeFilePath))
+    onSend(
+      trimmed,
+      forceIncludeFile ?? (fileAttached && !!activeFilePath),
+      mentions.length ? mentions.map((m) => m.id) : undefined
+    )
     setInput('')
+    setMentions([])
+    setMentionOpen(false)
+    setMentionQuery('')
   }
 
   const isStreaming = (id: string) => id === streamingId
@@ -138,7 +177,69 @@ export function ChatPanel({
     messages[lastMsgIndex]?.role === 'assistant' &&
     messages.some((m) => m.role === 'user')
 
+  /** 检测光标前的 @token：形如「空白或开头 + @ + 非空格文本」 */
+  const detectMention = (value: string, caret: number) => {
+    const before = value.slice(0, caret)
+    const match = before.match(/(^|\s)@([^\s@]*)$/)
+    if (match) {
+      setMentionQuery(match[2])
+      setMentionOpen(true)
+    } else {
+      setMentionOpen(false)
+      setMentionQuery('')
+    }
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setInput(value)
+    detectMention(value, e.target.selectionStart ?? value.length)
+  }
+
+  /** 选中候选文件：替换输入框中的 @token，插入 @path 并记录引用 */
+  const pickMention = (file: FileMeta) => {
+    const el = textareaRef.current
+    const caret = el?.selectionStart ?? input.length
+    const before = input.slice(0, caret)
+    const after = input.slice(caret)
+    const atIdx = before.lastIndexOf('@')
+    const newText =
+      atIdx >= 0 ? before.slice(0, atIdx) + '@' + file.path + ' ' + after : input
+    setInput(newText)
+    setMentionOpen(false)
+    setMentionQuery('')
+    setMentions((prev) => (prev.some((m) => m.id === file.id) ? prev : [...prev, file]))
+    requestAnimationFrame(() => {
+      el?.focus()
+      const pos = atIdx >= 0 ? atIdx + file.path.length + 2 : newText.length
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // @ 下拉打开时优先处理候选导航
+    if (mentionOpen && mentionMatches.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIndex((i) => (i + 1) % mentionMatches.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length)
+        return
+      }
+      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+        e.preventDefault()
+        pickMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionOpen(false)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       send(input)
@@ -183,6 +284,29 @@ export function ChatPanel({
 
   /** 用户消息可编辑：非流式中、非临时 ID（临时 ID 只在生成中断后出现） */
   const canEdit = (msg: ChatMsg) => !loading && !msg.id.startsWith('tmp-')
+
+  /** 搜索态下把关键词高亮（仅用户消息纯文本部分） */
+  const highlightText = (text: string, query: string): React.ReactNode => {
+    if (!query) return text
+    const lower = text.toLowerCase()
+    const q = query.toLowerCase()
+    if (!lower.includes(q)) return text
+    const parts: React.ReactNode[] = []
+    let i = 0
+    let idx = lower.indexOf(q)
+    while (idx !== -1) {
+      if (idx > i) parts.push(text.slice(i, idx))
+      parts.push(
+        <mark key={parts.length} className="rounded-sm bg-clay/25 px-0.5 text-foreground">
+          {text.slice(idx, idx + q.length)}
+        </mark>
+      )
+      i = idx + q.length
+      idx = lower.indexOf(q, i)
+    }
+    if (i < text.length) parts.push(text.slice(i))
+    return parts
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -289,6 +413,20 @@ export function ChatPanel({
           variant="ghost"
           size="icon"
           className="h-7 w-7 shrink-0"
+          onClick={() => {
+            setSearchOpen((v) => !v)
+            setSearchQuery('')
+          }}
+          aria-label="在当前会话中搜索消息"
+          title="在当前会话中搜索消息"
+          data-active={searchOpen}
+        >
+          <Search className={`h-3.5 w-3.5 ${searchOpen ? 'text-clay' : 'text-muted-foreground'}`} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
           onClick={onExportChat}
           disabled={loading || messages.length === 0}
           aria-label="导出当前会话为 Markdown"
@@ -309,19 +447,62 @@ export function ChatPanel({
         </Button>
       </div>
 
+      {/* 会话内消息搜索条 */}
+      {searchOpen && (
+        <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && (setSearchOpen(false), setSearchQuery(''))}
+            placeholder="在当前会话中搜索消息…"
+            className="h-7 border-0 bg-transparent px-0 text-[13px] shadow-none focus-visible:ring-0"
+            autoFocus
+          />
+          {searching && (
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {visibleMessages.length} 条匹配
+            </span>
+          )}
+          <button
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-accent"
+            onClick={() => {
+              setSearchOpen(false)
+              setSearchQuery('')
+            }}
+            aria-label="关闭搜索"
+            title="关闭搜索"
+          >
+            <X className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+        </div>
+      )}
+
       {/* 消息列表 */}
       <div className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
-        {messages.length === 0 && !loading && (
+        {visibleMessages.length === 0 && !loading && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-            <Sparkles className="h-6 w-6 text-clay/60" />
-            <p className="font-claude-serif text-sm text-foreground/70">开始新的对话</p>
-            <p className="max-w-[220px] text-xs text-muted-foreground">
-              向 AI 描述需求，或打开文件后使用下方快捷指令
-            </p>
+            {searching ? (
+              <>
+                <Search className="h-6 w-6 text-clay/60" />
+                <p className="font-claude-serif text-sm text-foreground/70">没有匹配的消息</p>
+                <p className="max-w-[220px] text-xs text-muted-foreground">
+                  换个关键词试试，或点击搜索框右侧 × 退出搜索
+                </p>
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-6 w-6 text-clay/60" />
+                <p className="font-claude-serif text-sm text-foreground/70">开始新的对话</p>
+                <p className="max-w-[220px] text-xs text-muted-foreground">
+                  向 AI 描述需求，或输入 @ 引用文件、打开文件后使用下方快捷指令
+                </p>
+              </>
+            )}
           </div>
         )}
 
-        {messages.map((msg, idx) => (
+        {visibleMessages.map((msg, idx) => (
           <div key={msg.id} className="group/msg">
             <div className="flex gap-2.5">
               <div
@@ -397,13 +578,13 @@ export function ChatPanel({
                   </div>
                 ) : (
                   <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">
-                    {msg.content}
+                    {highlightText(msg.content, searching ? searchQuery.trim() : '')}
                   </p>
                 )}
               </div>
             </div>
-            {/* 悬浮操作行：AI 回复复制 + 重新生成（仅最后一条）；用户消息编辑 */}
-            {msg.role === 'assistant' && !isStreaming(msg.id) ? (
+            {/* 悬浮操作行：AI 回复复制 + 重新生成（仅最后一条）；用户消息编辑（搜索过滤态下隐藏，索引已失真） */}
+            {!searching && (msg.role === 'assistant' && !isStreaming(msg.id) ? (
               <div className="ml-[38px] mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
@@ -444,7 +625,7 @@ export function ChatPanel({
                   编辑
                 </button>
               </div>
-            ) : null}
+            ) : null)}
           </div>
         ))}
 
@@ -506,14 +687,70 @@ export function ChatPanel({
               </span>
             </div>
           )}
+          {mentions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
+              {mentions.map((m) => (
+                <span
+                  key={m.id}
+                  className="flex max-w-full items-center gap-1 rounded-md border border-clay/40 bg-clay/10 px-1.5 py-0.5 text-[11px] text-clay"
+                >
+                  <AtSign className="h-3 w-3 shrink-0" />
+                  <span className="truncate font-mono">{m.path}</span>
+                  <button
+                    className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-background/70"
+                    title="移除引用（AI 将看不到该文件）"
+                    aria-label={`移除引用 ${m.path}`}
+                    onClick={() => setMentions((prev) => prev.filter((x) => x.id !== m.id))}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* @ 文件引用下拉 */}
+          {mentionOpen && (
+            <div className="absolute bottom-full left-3 right-3 z-10 mb-1 overflow-hidden rounded-lg border border-border bg-card shadow-md">
+              <div className="border-b border-border/60 px-2.5 py-1 text-[10.5px] text-muted-foreground">
+                引用文件作为 AI 上下文（↑↓ 选择 · Enter 确认 · Esc 关闭）
+              </div>
+              <div className="thin-scrollbar max-h-52 overflow-y-auto p-1">
+                {mentionMatches.length === 0 ? (
+                  <p className="px-2 py-2 text-[12px] text-muted-foreground">没有匹配的文件</p>
+                ) : (
+                  mentionMatches.map((f, i) => (
+                    <button
+                      key={f.id}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                        i === mentionIndex ? 'bg-clay/10 text-clay' : 'text-foreground/85 hover:bg-accent'
+                      }`}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        pickMention(f)
+                      }}
+                      onMouseEnter={() => setMentionIndex(i)}
+                    >
+                      <FileCode2 className="h-3.5 w-3.5 shrink-0 text-clay" />
+                      <span className="truncate font-mono">{f.path}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
           <Textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onBlur={() => {
+              // 延迟关闭，避免点击下拉项时误收起（下拉项用 mousedown + preventDefault 保持焦点）
+              setTimeout(() => setMentionOpen(false), 120)
+            }}
             placeholder={
               activeFilePath
-                ? `询问 AI，或让它修改 ${activeFilePath}…（Enter 发送，Shift+Enter 换行）`
-                : '向 AI 描述你的需求…（打开文件后可针对文件提问）'
+                ? `询问 AI，或让它修改 ${activeFilePath}…（@ 引用文件，Enter 发送）`
+                : '向 AI 描述你的需求…（输入 @ 引用文件作为上下文）'
             }
             className="min-h-[72px] resize-none border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
           />

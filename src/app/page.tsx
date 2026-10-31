@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -20,6 +20,7 @@ import { ChatPanel } from '@/components/workspace/chat-panel'
 import { GlobalSearch } from '@/components/workspace/global-search'
 import { DiffDialog } from '@/components/workspace/diff-dialog'
 import { SaveAsDialog, suggestFileName } from '@/components/workspace/save-as-dialog'
+import { ShortcutsDialog } from '@/components/workspace/shortcuts-dialog'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
@@ -54,6 +55,8 @@ export default function WorkspacePage() {
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
+  // 快捷键帮助面板（Ctrl/⌘ + /）
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -244,7 +247,7 @@ export default function WorkspacePage() {
     [saveTab]
   )
 
-  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 手动保存当前标签
+  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 保存；Ctrl/⌘ + / 快捷键帮助
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -262,6 +265,9 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         setSearchOpen(true)
+      } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+        e.preventDefault()
+        setShortcutsOpen((prev) => !prev)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -423,7 +429,7 @@ export default function WorkspacePage() {
     [closeTab, refreshFiles, toast]
   )
 
-  // ===== 聊天（流式，支持停止生成 / 重新生成 / 编辑重发） =====
+  // ===== 聊天（流式，支持停止生成 / 重新生成 / 编辑重发 / @ 引用） =====
   const runStream = useCallback(
     async (opts: {
       message: string
@@ -431,8 +437,10 @@ export default function WorkspacePage() {
       editMessageId?: string
       /** 是否把当前打开的文件作为上下文发给 AI（默认 true；重新生成/编辑重发不受影响） */
       includeFile?: boolean
+      /** @ 引用的文件 ID 列表（仅普通发送；发送前逐个拉取内容传给后端） */
+      mentionIds?: string[]
     }) => {
-      const { message, regenerate, editMessageId, includeFile = true } = opts
+      const { message, regenerate, editMessageId, includeFile = true, mentionIds } = opts
       // 防止并发请求：已有流式请求进行中时忽略
       if (abortRef.current) return
       const tempUserId = `tmp-u-${Date.now()}`
@@ -473,6 +481,25 @@ export default function WorkspacePage() {
       const controller = new AbortController()
       abortRef.current = controller
 
+      // @ 引用文件：发送前逐个拉取内容（最多 5 个，服务端还会再校验/截断）
+      let referencedFiles: { path: string; content: string; language?: string }[] = []
+      if (mentionIds?.length) {
+        const fetched = await Promise.all(
+          mentionIds.slice(0, 5).map(async (id) => {
+            try {
+              const res = await fetch(`/api/files/${id}`)
+              if (!res.ok) return null
+              const data = await res.json()
+              const f = data.file
+              return f ? { path: f.path, content: f.content, language: f.language } : null
+            } catch {
+              return null
+            }
+          })
+        )
+        referencedFiles = fetched.filter((f): f is NonNullable<typeof f> => f !== null)
+      }
+
       const tab = activeTabRef.current
       const sessionId = activeSessionRef.current
       let pending = ''
@@ -501,6 +528,7 @@ export default function WorkspacePage() {
               includeFile && tab
                 ? { path: tab.path, content: tab.content, language: tab.language }
                 : null,
+            referencedFiles: referencedFiles.length ? referencedFiles : undefined,
           }),
         })
         if (!res.ok || !res.body) {
@@ -593,10 +621,10 @@ export default function WorkspacePage() {
     [refreshSessions, toast]
   )
 
-  /** 发送消息（普通模式）；includeFile 由聊天面板附件 chip 控制 */
+  /** 发送消息（普通模式）；includeFile 由附件 chip 控制，mentionIds 为 @ 引用文件 */
   const sendMessage = useCallback(
-    (message: string, includeFile = true) => {
-      void runStream({ message, includeFile })
+    (message: string, includeFile = true, mentionIds?: string[]) => {
+      void runStream({ message, includeFile, mentionIds })
     },
     [runStream]
   )
@@ -896,6 +924,7 @@ export default function WorkspacePage() {
       loading={chatLoading}
       streamingId={streamingId}
       activeFilePath={activeTab?.path ?? null}
+      files={files}
       sessions={sessions}
       activeSessionId={activeSessionId}
       onSwitchSession={switchSession}
@@ -965,6 +994,8 @@ export default function WorkspacePage() {
         creating={savingAs}
         onConfirm={(path) => void confirmSaveAs(path)}
       />
+      {/* 快捷键帮助（Ctrl/⌘ + /） */}
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {/* 顶栏 */}
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-clay">
@@ -997,6 +1028,14 @@ export default function WorkspacePage() {
           <Github className="h-4 w-4" />
           <span className="hidden sm:inline">GitHub</span>
         </a>
+        <button
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={() => setShortcutsOpen(true)}
+          title="快捷键帮助（Ctrl/⌘ + /）"
+        >
+          <Keyboard className="h-4 w-4" />
+          <span className="hidden sm:inline">快捷键</span>
+        </button>
       </header>
 
       {initialLoading ? (

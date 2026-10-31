@@ -14,6 +14,36 @@ const SYSTEM_PROMPT = `你是一个网页版 AI 编程工作台内置的编程�
 - 回答控制在合理篇幅：先给结论或代码，再给必要的简短解释。`
 
 const HISTORY_LIMIT = 10
+/** @ 引用的文件：最多 5 个，单个内容截断长度 */
+const MAX_REFERENCED_FILES = 5
+const MAX_REF_CONTENT_CHARS = 50000
+
+interface ReferencedFile {
+  path: string
+  content: string
+  language?: string
+}
+
+/** 从请求体提取合法的 @ 引用文件列表（容错：非法项直接丢弃） */
+function parseReferencedFiles(raw: unknown): ReferencedFile[] {
+  if (!Array.isArray(raw)) return []
+  const files: ReferencedFile[] = []
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item.path === 'string' &&
+      typeof item.content === 'string' &&
+      files.length < MAX_REFERENCED_FILES
+    ) {
+      files.push({
+        path: item.path,
+        content: item.content.slice(0, MAX_REF_CONTENT_CHARS),
+        language: typeof item.language === 'string' ? item.language : undefined,
+      })
+    }
+  }
+  return files
+}
 
 type StreamFrame =
   | { t: 'delta'; v: string }
@@ -32,6 +62,7 @@ export async function POST(request: NextRequest) {
   let message = ''
   let requestedSessionId: string | null = null
   let currentFile: { path: string; content: string; language?: string } | null = null
+  let referencedFiles: ReferencedFile[] = []
   let regenerate = false
   let editMessageId: string | null = null
   try {
@@ -54,6 +85,7 @@ export async function POST(request: NextRequest) {
         language: typeof body.currentFile.language === 'string' ? body.currentFile.language : undefined,
       }
     }
+    referencedFiles = parseReferencedFiles(body.referencedFiles)
   } catch {
     return Response.json({ error: '请求体解析失败' }, { status: 400 })
   }
@@ -106,13 +138,18 @@ export async function POST(request: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-  // 拼接当前文件上下文
+  // 拼接当前文件与 @ 引用文件上下文
   let userContent = message
   if (currentFile) {
     const { path, content, language } = currentFile
     userContent +=
       `\n\n---\n[当前打开的文件] ${path}（${language ?? 'plaintext'}）：\n` +
       '```' + (language ?? '') + '\n' + content + '\n```'
+  }
+  for (const file of referencedFiles) {
+    userContent +=
+      `\n\n---\n[用户 @ 引用的文件] ${file.path}（${file.language ?? 'plaintext'}）：\n` +
+      '```' + (file.language ?? '') + '\n' + file.content + '\n```'
   }
 
   let zai: Awaited<ReturnType<typeof ZAI.create>>
