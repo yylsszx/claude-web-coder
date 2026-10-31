@@ -233,6 +233,8 @@ interface CodeEditorProps {
   onQuickOpen?: () => void
   /** 空态全局搜索（Ctrl/⌘ + Shift + F） */
   onGlobalSearch?: () => void
+  /** 状态栏「行，列」点击回调：打开转到行对话框（未传时渲染纯文本） */
+  onOpenGoto?: () => void
 }
 
 export function CodeEditor({
@@ -258,6 +260,7 @@ export function CodeEditor({
   onOpenFile,
   onQuickOpen,
   onGlobalSearch,
+  onOpenGoto,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const editorViewRef = useRef<EditorView | null>(null)
@@ -1096,11 +1099,21 @@ export function CodeEditor({
       {/* 状态栏：光标位置 / 选区统计 / 字符数 */}
       {cursorInfo && (
         <div className="flex h-6 shrink-0 items-center gap-3 border-t border-border bg-secondary/40 px-3 text-[11px] text-muted-foreground">
-          {showEditor && (
-            <span>
-              行 {cursorInfo.line}，列 {cursorInfo.col}
-            </span>
-          )}
+          {showEditor &&
+            (onOpenGoto ? (
+              <button
+                type="button"
+                onClick={onOpenGoto}
+                title="转到行（Ctrl/⌘ + G）"
+                className="rounded transition-colors hover:text-foreground"
+              >
+                行 {cursorInfo.line}，列 {cursorInfo.col}
+              </button>
+            ) : (
+              <span>
+                行 {cursorInfo.line}，列 {cursorInfo.col}
+              </span>
+            ))}
           {showEditor && cursorInfo.selChars > 0 && (
             <span className="text-clay">
               已选 {cursorInfo.selLines > 1 ? `${cursorInfo.selLines} 行 / ` : ''}

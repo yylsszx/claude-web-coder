@@ -44,6 +44,9 @@ export default function WorkspacePage() {
   const [openTabs, setOpenTabs] = useState<FileFull[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabStates, setTabStates] = useState<Record<string, SaveState>>({})
+  // 标签页持久化守卫：初始加载完成恢复（或确认无存档）后才允许写入 localStorage，
+  // 否则挂载时的空标签状态会在首次渲染副作用里把上次的存档覆盖掉
+  const tabsRestoredRef = useRef(false)
 
   // ===== 聊天状态 =====
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -291,6 +294,48 @@ export default function WorkspacePage() {
         const sessionsData = await sessionsRes.json()
         if (cancelled) return
         if (filesRes.ok) setFiles(filesData.files ?? [])
+        // ===== 恢复上次打开的标签（localStorage：cw-open-tabs，仅存 ID 列表 + 激活标签）=====
+        const metaList: FileMeta[] = filesRes.ok ? (filesData.files ?? []) : []
+        try {
+          const raw = localStorage.getItem('cw-open-tabs')
+          if (raw) {
+            const saved = JSON.parse(raw) as { ids?: unknown; activeId?: unknown }
+            const ids = Array.isArray(saved.ids)
+              ? saved.ids.filter((v): v is string => typeof v === 'string')
+              : []
+            const savedActive = typeof saved.activeId === 'string' ? saved.activeId : null
+            // 过滤已删除的文件，最多恢复 12 个
+            const existIds = ids.filter((id) => metaList.some((f) => f.id === id)).slice(0, 12)
+            if (existIds.length > 0) {
+              const results = await Promise.allSettled(
+                existIds.map(async (id) => {
+                  const r = await fetch(`/api/files/${id}`)
+                  if (!r.ok) return null
+                  const data = await r.json()
+                  return (data.file as FileFull | undefined) ?? null
+                })
+              )
+              const restored = results.flatMap((r) =>
+                r.status === 'fulfilled' && r.value ? [r.value] : []
+              )
+              if (restored.length > 0) {
+                tabsRestoredRef.current = true
+                setOpenTabs(restored)
+                setTabStates(
+                  Object.fromEntries(restored.map((t) => [t.id, 'saved' as SaveState]))
+                )
+                setActiveTabId(
+                  savedActive && restored.some((t) => t.id === savedActive)
+                    ? savedActive
+                    : restored[restored.length - 1].id
+                )
+              }
+            }
+          }
+        } catch {
+          // 存档损坏则忽略，按无标签启动
+        }
+        tabsRestoredRef.current = true
         const list: SessionMeta[] = sessionsRes.ok ? (sessionsData.sessions ?? []) : []
         setSessions(list)
         if (list.length > 0) {
@@ -310,6 +355,23 @@ export default function WorkspacePage() {
       Object.values(saveTimersRef.current).forEach(clearTimeout)
     }
   }, [])
+
+  // 标签页变化 → 持久化到 localStorage（刷新后自动恢复打开的标签与激活位置；
+  // 恢复完成前不写入，避免挂载时的空标签状态覆盖存档）
+  useEffect(() => {
+    if (!tabsRestoredRef.current) return
+    try {
+      localStorage.setItem(
+        'cw-open-tabs',
+        JSON.stringify({
+          ids: openTabs.map((t) => t.id).slice(0, 12),
+          activeId: activeTabId,
+        })
+      )
+    } catch {
+      // 隐私模式等写入失败时静默降级（仅丢失刷新恢复能力）
+    }
+  }, [openTabs, activeTabId])
 
   // 挂载后同步一次面板折叠状态：autoSaveId 恢复的布局可能自带折叠尺寸（size=0），
   // 此时不会触发 onCollapse，需主动校正按钮图标与手柄显隐
@@ -543,9 +605,12 @@ export default function WorkspacePage() {
         e.preventDefault()
         void saveAllDirty()
       } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g') {
-        // Ctrl/⌘ + G 转到行（需有打开的标签）
-        e.preventDefault()
-        if (activeTabRef.current) {
+        // 编辑器内 Ctrl/⌘ + G 交给 CodeMirror（searchKeymap 的 findNext / gotoLine），
+        // 编辑器外用于打开「转到行」对话框（与 Ctrl/⌘ + / 同款守卫，防双开抢焦点）
+        const inEditor =
+          e.target instanceof HTMLElement && e.target.closest('.cm-editor')
+        if (!inEditor && !e.defaultPrevented && activeTabRef.current) {
+          e.preventDefault()
           setGotoValue('')
           setGotoOpen(true)
         }
@@ -1222,13 +1287,14 @@ export default function WorkspacePage() {
     [openFile]
   )
 
-  /** 转到行（Ctrl/⌘ + G）：定位当前标签的指定行 */
+  /** 转到行（Ctrl/⌘ + G）：定位当前标签的指定行（超出总行数时钳制到最后一行） */
   const handleGotoLine = useCallback(() => {
     const tab = activeTabRef.current
     const line = Number(gotoValue)
     if (!tab || !Number.isFinite(line) || line < 1) return
     setGotoOpen(false)
-    void jumpToLine(tab.id, Math.floor(line))
+    const maxLine = tab.content ? tab.content.split('\n').length : 1
+    void jumpToLine(tab.id, Math.min(Math.floor(line), maxLine))
   }, [gotoValue, jumpToLine])
 
   /** 拖拽本地文件到文件树导入工作区：重名自动加后缀，单文件限 1MB */
@@ -1366,6 +1432,8 @@ export default function WorkspacePage() {
     () => [...files].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5),
     [files]
   )
+  /** 当前标签总行数（转到行对话框提示与占位符用） */
+  const gotoTotalLines = activeTab?.content ? activeTab.content.split('\n').length : 0
 
   const editorView = (
     <CodeEditor
@@ -1390,6 +1458,10 @@ export default function WorkspacePage() {
       onOpenFile={(id) => void openFile(id)}
       onQuickOpen={() => setQuickOpen(true)}
       onGlobalSearch={() => setSearchOpen(true)}
+      onOpenGoto={() => {
+        setGotoValue('')
+        setGotoOpen(true)
+      }}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -1739,13 +1811,19 @@ export default function WorkspacePage() {
           <DialogHeader>
             <DialogTitle className="font-claude-serif">转到行</DialogTitle>
             <DialogDescription>
-              定位到 <span className="font-medium">{activeTabRef.current?.path ?? '当前文件'}</span> 的指定行，回车确认
+              定位到 <span className="font-medium">{activeTab?.path ?? '当前文件'}</span> 的指定行
+              {gotoTotalLines > 0 && (
+                <>
+                  ，共 {gotoTotalLines.toLocaleString()} 行
+                </>
+              )}
+              ，回车确认
             </DialogDescription>
           </DialogHeader>
           <Input
             value={gotoValue}
             onChange={(e) => setGotoValue(e.target.value.replace(/[^\d]/g, ''))}
-            placeholder="行号，如 42"
+            placeholder={gotoTotalLines > 0 ? `行号，1 ~ ${gotoTotalLines}` : '行号，如 42'}
             inputMode="numeric"
             autoFocus
             onKeyDown={(e) => {
