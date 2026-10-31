@@ -1,0 +1,763 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     4→import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+     5→import { Github, Sparkles, Loader2, FileCode2, Search, Download } from 'lucide-react'
+     6→import {
+     7→  CommandDialog,
+     8→  CommandEmpty,
+     9→  CommandGroup,
+    10→  CommandInput,
+    11→  CommandItem,
+    12→  CommandList,
+    13→} from '@/components/ui/command'
+    14→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    15→import { useToast } from '@/hooks/use-toast'
+    16→import { useIsMobile } from '@/hooks/use-mobile'
+    17→import { FileTree } from '@/components/workspace/file-tree'
+    18→import { CodeEditor, type JumpTarget, type SaveState } from '@/components/workspace/code-editor'
+    19→import { ChatPanel } from '@/components/workspace/chat-panel'
+    20→import { GlobalSearch } from '@/components/workspace/global-search'
+    21→import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
+    22→
+    23→const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
+    24→
+    25→export default function WorkspacePage() {
+    26→  const { toast } = useToast()
+    27→  const isMobile = useIsMobile()
+    28→
+    29→  // ===== 文件与标签页状态 =====
+    30→  const [files, setFiles] = useState<FileMeta[]>([])
+    31→  const [openTabs, setOpenTabs] = useState<FileFull[]>([])
+    32→  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+    33→  const [tabStates, setTabStates] = useState<Record<string, SaveState>>({})
+    34→
+    35→  // ===== 聊天状态 =====
+    36→  const [messages, setMessages] = useState<ChatMsg[]>([])
+    37→  const [sessions, setSessions] = useState<SessionMeta[]>([])
+    38→  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+    39→  const [chatLoading, setChatLoading] = useState(false)
+    40→  const [streamingId, setStreamingId] = useState<string | null>(null)
+    41→  const [initialLoading, setInitialLoading] = useState(true)
+    42→
+    43→  // ===== 快速打开 / 全局搜索 / 跳转 =====
+    44→  const [quickOpen, setQuickOpen] = useState(false)
+    45→  const [searchOpen, setSearchOpen] = useState(false)
+    46→  const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
+    47→
+    48→  const activeTab = useMemo(
+    49→    () => openTabs.find((t) => t.id === activeTabId) ?? null,
+    50→    [openTabs, activeTabId]
+    51→  )
+    52→
+    53→  // refs：异步回调中读取最新值
+    54→  const openTabsRef = useRef(openTabs)
+    55→  openTabsRef.current = openTabs
+    56→  const activeTabRef = useRef(activeTab)
+    57→  activeTabRef.current = activeTab
+    58→  const activeSessionRef = useRef(activeSessionId)
+    59→  activeSessionRef.current = activeSessionId
+    60→  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+    61→  const abortRef = useRef<AbortController | null>(null)
+    62→
+    63→  // ===== 会话 =====
+    64→  const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
+    65→    const res = await fetch('/api/sessions')
+    66→    const data = await res.json()
+    67→    const list: SessionMeta[] = res.ok ? (data.sessions ?? []) : []
+    68→    setSessions(list)
+    69→    return list
+    70→  }, [])
+    71→
+    72→  const loadMessages = useCallback(async (sessionId: string) => {
+    73→    const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
+    74→    const data = await res.json()
+    75→    if (res.ok) setMessages(data.messages ?? [])
+    76→  }, [])
+    77→
+    78→  const switchSession = useCallback(
+    79→    async (id: string) => {
+    80→      if (activeSessionRef.current === id) return
+    81→      setActiveSessionId(id)
+    82→      setStreamingId(null)
+    83→      await loadMessages(id)
+    84→    },
+    85→    [loadMessages]
+    86→  )
+    87→
+    88→  const createSession = useCallback(async () => {
+    89→    try {
+    90→      const res = await fetch('/api/sessions', { method: 'POST' })
+    91→      const data = await res.json()
+    92→      if (!res.ok) throw new Error(data.error ?? '创建失败')
+    93→      await refreshSessions()
+    94→      setActiveSessionId(data.session.id)
+    95→      setMessages([])
+    96→      setStreamingId(null)
+    97→    } catch (error) {
+    98→      toast({
+    99→        title: '新建会话失败',
+   100→        description: error instanceof Error ? error.message : '请稍后重试',
+   101→        variant: 'destructive',
+   102→      })
+   103→    }
+   104→  }, [refreshSessions, toast])
+   105→
+   106→  const renameSession = useCallback(
+   107→    async (id: string, title: string): Promise<boolean> => {
+   108→      try {
+   109→        const res = await fetch(`/api/sessions/${id}`, {
+   110→          method: 'PATCH',
+   111→          headers: { 'Content-Type': 'application/json' },
+   112→          body: JSON.stringify({ title }),
+   113→        })
+   114→        const data = await res.json()
+   115→        if (!res.ok) throw new Error(data.error ?? '重命名失败')
+   116→        await refreshSessions()
+   117→        return true
+   118→      } catch (error) {
+   119→        toast({
+   120→          title: '重命名失败',
+   121→          description: error instanceof Error ? error.message : '请稍后重试',
+   122→          variant: 'destructive',
+   123→        })
+   124→        return false
+   125→      }
+   126→    },
+   127→    [refreshSessions, toast]
+   128→  )
+   129→
+   130→  const deleteSession = useCallback(
+   131→    async (id: string) => {
+   132→      try {
+   133→        const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+   134→        if (!res.ok) {
+   135→          const data = await res.json()
+   136→          throw new Error(data.error ?? '删除失败')
+   137→        }
+   138→        const list = await refreshSessions()
+   139→        if (activeSessionRef.current === id) {
+   140→          const next = list[0]
+   141→          if (next) {
+   142→            setActiveSessionId(next.id)
+   143→            await loadMessages(next.id)
+   144→          } else {
+   145→            setActiveSessionId(null)
+   146→            setMessages([])
+   147→          }
+   148→        }
+   149→        toast({ title: '会话已删除' })
+   150→      } catch (error) {
+   151→        toast({
+   152→          title: '删除会话失败',
+   153→          description: error instanceof Error ? error.message : '请稍后重试',
+   154→          variant: 'destructive',
+   155→        })
+   156→      }
+   157→    },
+   158→    [loadMessages, refreshSessions, toast]
+   159→  )
+   160→
+   161→  // ===== 初始加载 =====
+   162→  useEffect(() => {
+   163→    let cancelled = false
+   164→    const load = async () => {
+   165→      try {
+   166→        const [filesRes, sessionsRes] = await Promise.all([
+   167→          fetch('/api/files'),
+   168→          fetch('/api/sessions'),
+   169→        ])
+   170→        const filesData = await filesRes.json()
+   171→        const sessionsData = await sessionsRes.json()
+   172→        if (cancelled) return
+   173→        if (filesRes.ok) setFiles(filesData.files ?? [])
+   174→        const list: SessionMeta[] = sessionsRes.ok ? (sessionsData.sessions ?? []) : []
+   175→        setSessions(list)
+   176→        if (list.length > 0) {
+   177→          setActiveSessionId(list[0].id)
+   178→          const chatRes = await fetch(`/api/chat?sessionId=${encodeURIComponent(list[0].id)}`)
+   179→          const chatData = await chatRes.json()
+   180→          if (!cancelled && chatRes.ok) setMessages(chatData.messages ?? [])
+   181→        }
+   182→      } finally {
+   183→        if (!cancelled) setInitialLoading(false)
+   184→      }
+   185→    }
+   186→    load()
+   187→    return () => {
+   188→      cancelled = true
+   189→      // 卸载时清理所有自动保存定时器
+   190→      Object.values(saveTimersRef.current).forEach(clearTimeout)
+   191→    }
+   192→  }, [])
+   193→
+   194→  // ===== 保存 =====
+   195→  const saveTab = useCallback(
+   196→    async (tabId: string, contentOverride?: string) => {
+   197→      const tab = openTabsRef.current.find((t) => t.id === tabId)
+   198→      if (!tab) return
+   199→      const content = contentOverride ?? tab.content
+   200→      setTabStates((prev) => ({ ...prev, [tabId]: 'saving' }))
+   201→      try {
+   202→        const res = await fetch(`/api/files/${tabId}`, {
+   203→          method: 'PUT',
+   204→          headers: { 'Content-Type': 'application/json' },
+   205→          body: JSON.stringify({ content }),
+   206→        })
+   207→        if (!res.ok) {
+   208→          const data = await res.json()
+   209→          throw new Error(data.error ?? '保存失败')
+   210→        }
+   211→        setOpenTabs((prev) =>
+   212→          prev.map((t) => (t.id === tabId ? { ...t, content } : t))
+   213→        )
+   214→        setTabStates((prev) => ({ ...prev, [tabId]: 'saved' }))
+   215→      } catch (error) {
+   216→        setTabStates((prev) => ({ ...prev, [tabId]: 'dirty' }))
+   217→        toast({
+   218→          title: '保存失败',
+   219→          description: error instanceof Error ? error.message : '请稍后重试',
+   220→          variant: 'destructive',
+   221→        })
+   222→      }
+   223→    },
+   224→    [toast]
+   225→  )
+   226→
+   227→  const scheduleSave = useCallback(
+   228→    (tabId: string, content: string) => {
+   229→      if (saveTimersRef.current[tabId]) clearTimeout(saveTimersRef.current[tabId])
+   230→      saveTimersRef.current[tabId] = setTimeout(() => void saveTab(tabId, content), 1000)
+   231→    },
+   232→    [saveTab]
+   233→  )
+   234→
+   235→  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 手动保存当前标签
+   236→  useEffect(() => {
+   237→    const onKeyDown = (e: KeyboardEvent) => {
+   238→      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+   239→        e.preventDefault()
+   240→        const tab = activeTabRef.current
+   241→        if (!tab) return
+   242→        if (saveTimersRef.current[tab.id]) {
+   243→          clearTimeout(saveTimersRef.current[tab.id])
+   244→          delete saveTimersRef.current[tab.id]
+   245→        }
+   246→        void saveTab(tab.id)
+   247→      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+   248→        e.preventDefault()
+   249→        setQuickOpen((prev) => !prev)
+   250→      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+   251→        e.preventDefault()
+   252→        setSearchOpen(true)
+   253→      }
+   254→    }
+   255→    window.addEventListener('keydown', onKeyDown)
+   256→    return () => window.removeEventListener('keydown', onKeyDown)
+   257→  }, [saveTab])
+   258→
+   259→  // ===== 文件操作 =====
+   260→  const refreshFiles = useCallback(async () => {
+   261→    const res = await fetch('/api/files')
+   262→    const data = await res.json()
+   263→    if (res.ok) setFiles(data.files ?? [])
+   264→  }, [])
+   265→
+   266→  const openFile = useCallback(
+   267→    async (id: string) => {
+   268→      // 已打开 → 仅切换
+   269→      if (openTabsRef.current.some((t) => t.id === id)) {
+   270→        setActiveTabId(id)
+   271→        return
+   272→      }
+   273→      try {
+   274→        const res = await fetch(`/api/files/${id}`)
+   275→        const data = await res.json()
+   276→        if (!res.ok) throw new Error(data.error ?? '打开文件失败')
+   277→        const file: FileFull = data.file
+   278→        setOpenTabs((prev) => [...prev, file])
+   279→        setTabStates((prev) => ({ ...prev, [file.id]: 'saved' }))
+   280→        setActiveTabId(file.id)
+   281→      } catch (error) {
+   282→        toast({
+   283→          title: '打开文件失败',
+   284→          description: error instanceof Error ? error.message : '请稍后重试',
+   285→          variant: 'destructive',
+   286→        })
+   287→      }
+   288→    },
+   289→    [toast]
+   290→  )
+   291→
+   292→  const closeTab = useCallback(
+   293→    async (id: string) => {
+   294→      const tab = openTabsRef.current.find((t) => t.id === id)
+   295→      if (!tab) return
+   296→      // 未保存则先保存
+   297→      if (saveTimersRef.current[id]) {
+   298→        clearTimeout(saveTimersRef.current[id])
+   299→        delete saveTimersRef.current[id]
+   300→      }
+   301→      if (tabStates[id] === 'dirty') await saveTab(id)
+   302→      setOpenTabs((prev) => {
+   303→        const idx = prev.findIndex((t) => t.id === id)
+   304→        const next = prev.filter((t) => t.id !== id)
+   305→        // 若关闭的是激活标签，激活相邻标签
+   306→        setActiveTabId((cur) => {
+   307→          if (cur !== id) return cur
+   308→          if (!next.length) return null
+   309→          return next[Math.min(idx, next.length - 1)].id
+   310→        })
+   311→        return next
+   312→      })
+   313→      setTabStates((prev) => {
+   314→        const { [id]: _removed, ...rest } = prev
+   315→        return rest
+   316→      })
+   317→    },
+   318→    [saveTab, tabStates]
+   319→  )
+   320→
+   321→  const handleEditorChange = useCallback(
+   322→    (value: string) => {
+   323→      const tab = activeTabRef.current
+   324→      if (!tab || tab.content === value) return
+   325→      setOpenTabs((prev) =>
+   326→        prev.map((t) => (t.id === tab.id ? { ...t, content: value } : t))
+   327→      )
+   328→      setTabStates((prev) => ({ ...prev, [tab.id]: 'dirty' }))
+   329→      scheduleSave(tab.id, value)
+   330→    },
+   331→    [scheduleSave]
+   332→  )
+   333→
+   334→  const createFile = useCallback(
+   335→    async (path: string): Promise<boolean> => {
+   336→      try {
+   337→        const res = await fetch('/api/files', {
+   338→          method: 'POST',
+   339→          headers: { 'Content-Type': 'application/json' },
+   340→          body: JSON.stringify({ path }),
+   341→        })
+   342→        const data = await res.json()
+   343→        if (!res.ok) throw new Error(data.error ?? '创建失败')
+   344→        await refreshFiles()
+   345→        await openFile(data.file.id)
+   346→        toast({ title: '文件已创建', description: path })
+   347→        return true
+   348→      } catch (error) {
+   349→        toast({
+   350→          title: '创建文件失败',
+   351→          description: error instanceof Error ? error.message : '请稍后重试',
+   352→          variant: 'destructive',
+   353→        })
+   354→        return false
+   355→      }
+   356→    },
+   357→    [openFile, refreshFiles, toast]
+   358→  )
+   359→
+   360→  const renameFile = useCallback(
+   361→    async (id: string, newPath: string): Promise<boolean> => {
+   362→      try {
+   363→        const res = await fetch(`/api/files/${id}`, {
+   364→          method: 'PUT',
+   365→          headers: { 'Content-Type': 'application/json' },
+   366→          body: JSON.stringify({ path: newPath }),
+   367→        })
+   368→        const data = await res.json()
+   369→        if (!res.ok) throw new Error(data.error ?? '重命名失败')
+   370→        await refreshFiles()
+   371→        setOpenTabs((prev) =>
+   372→          prev.map((t) =>
+   373→            t.id === id
+   374→              ? { ...t, path: newPath, language: data.file?.language ?? t.language }
+   375→              : t
+   376→          )
+   377→        )
+   378→        toast({ title: '已重命名', description: newPath })
+   379→        return true
+   380→      } catch (error) {
+   381→        toast({
+   382→          title: '重命名失败',
+   383→          description: error instanceof Error ? error.message : '请稍后重试',
+   384→          variant: 'destructive',
+   385→        })
+   386→        return false
+   387→      }
+   388→    },
+   389→    [refreshFiles, toast]
+   390→  )
+   391→
+   392→  const deleteFile = useCallback(
+   393→    async (id: string) => {
+   394→      try {
+   395→        const res = await fetch(`/api/files/${id}`, { method: 'DELETE' })
+   396→        if (!res.ok) {
+   397→          const data = await res.json()
+   398→          throw new Error(data.error ?? '删除失败')
+   399→        }
+   400→        await closeTab(id)
+   401→        await refreshFiles()
+   402→        toast({ title: '文件已删除' })
+   403→      } catch (error) {
+   404→        toast({
+   405→          title: '删除失败',
+   406→          description: error instanceof Error ? error.message : '请稍后重试',
+   407→          variant: 'destructive',
+   408→        })
+   409→      }
+   410→    },
+   411→    [closeTab, refreshFiles, toast]
+   412→  )
+   413→
+   414→  // ===== 聊天（流式，支持停止生成） =====
+   415→  const sendMessage = useCallback(
+   416→    async (message: string) => {
+   417→      const tempUserId = `tmp-u-${Date.now()}`
+   418→      const streamId = `tmp-a-${Date.now()}`
+   419→      const now = new Date().toISOString()
+   420→      setMessages((prev) => [
+   421→        ...prev,
+   422→        { id: tempUserId, role: 'user', content: message, createdAt: now },
+   423→        { id: streamId, role: 'assistant', content: '', createdAt: now },
+   424→      ])
+   425→      setChatLoading(true)
+   426→      setStreamingId(streamId)
+   427→
+   428→      const controller = new AbortController()
+   429→      abortRef.current = controller
+   430→
+   431→      const tab = activeTabRef.current
+   432→      const sessionId = activeSessionRef.current
+   433→      let pending = ''
+   434→      let flushTimer: ReturnType<typeof setTimeout> | null = null
+   435→      const flush = () => {
+   436→        flushTimer = null
+   437→        if (!pending) return
+   438→        const chunk = pending
+   439→        pending = ''
+   440→        setMessages((prev) =>
+   441→          prev.map((m) => (m.id === streamId ? { ...m, content: m.content + chunk } : m))
+   442→        )
+   443→      }
+   444→
+   445→      try {
+   446→        const res = await fetch('/api/chat/stream', {
+   447→          method: 'POST',
+   448→          headers: { 'Content-Type': 'application/json' },
+   449→          signal: controller.signal,
+   450→          body: JSON.stringify({
+   451→            message,
+   452→            sessionId,
+   453→            currentFile: tab
+   454→              ? { path: tab.path, content: tab.content, language: tab.language }
+   455→              : null,
+   456→          }),
+   457→        })
+   458→        if (!res.ok || !res.body) {
+   459→          const data = await res.json().catch(() => ({}))
+   460→          throw new Error(data.error ?? 'AI 调用失败')
+   461→        }
+   462→
+   463→        const reader = res.body.getReader()
+   464→        const decoder = new TextDecoder()
+   465→        let buffer = ''
+   466→        let errorMsg: string | null = null
+   467→        let doneIds: {
+   468→          userMessageId: string
+   469→          assistantMessageId: string
+   470→          sessionId: string
+   471→          sessionTitle: string
+   472→        } | null = null
+   473→
+   474→        while (true) {
+   475→          const { done, value } = await reader.read()
+   476→          if (done) break
+   477→          buffer += decoder.decode(value, { stream: true })
+   478→          const parts = buffer.split('\n\n')
+   479→          buffer = parts.pop() ?? ''
+   480→          for (const part of parts) {
+   481→            const line = part.trim()
+   482→            if (!line.startsWith('data:')) continue
+   483→            const frame = JSON.parse(line.slice(5).trim())
+   484→            if (frame.t === 'delta') {
+   485→              pending += frame.v
+   486→              if (!flushTimer) flushTimer = setTimeout(flush, 60)
+   487→            } else if (frame.t === 'done') {
+   488→              doneIds = frame
+   489→            } else if (frame.t === 'error') {
+   490→              errorMsg = frame.v
+   491→            }
+   492→          }
+   493→        }
+   494→        if (flushTimer) {
+   495→          clearTimeout(flushTimer)
+   496→          flushTimer = null
+   497→        }
+   498→        flush()
+   499→
+   500→        if (errorMsg) throw new Error(errorMsg)
+   501→        if (doneIds) {
+   502→          const ids = doneIds
+   503→          setMessages((prev) =>
+   504→            prev.map((m) =>
+   505→              m.id === streamId
+   506→                ? { ...m, id: ids.assistantMessageId }
+   507→                : m.id === tempUserId
+   508→                  ? { ...m, id: ids.userMessageId }
+   509→                  : m
+   510→            )
+   511→          )
+   512→          // 会话可能被服务端自动命名/更新，刷新列表
+   513→          void refreshSessions()
+   514→        }
+   515→      } catch (error) {
+   516→        if (flushTimer) {
+   517→          clearTimeout(flushTimer)
+   518→          flushTimer = null
+   519→        }
+   520→        if (controller.signal.aborted) {
+   521→          // 用户点击「停止生成」：保留用户消息与已流出的部分内容
+   522→          flush()
+   523→          setMessages((prev) =>
+   524→            prev.filter((m) => m.id !== streamId || m.content.trim() !== '')
+   525→          )
+   526→          void refreshSessions()
+   527→          toast({ title: '已停止生成', description: '已生成的部分内容将保留' })
+   528→        } else {
+   529→          // 真实错误：丢弃占位消息，提示错误
+   530→          setMessages((prev) =>
+   531→            prev.filter((m) => m.id !== streamId && m.id !== tempUserId)
+   532→          )
+   533→          toast({
+   534→            title: 'AI 调用失败',
+   535→            description: error instanceof Error ? error.message : '请稍后重试',
+   536→            variant: 'destructive',
+   537→          })
+   538→        }
+   539→      } finally {
+   540→        abortRef.current = null
+   541→        setChatLoading(false)
+   542→        setStreamingId(null)
+   543→      }
+   544→    },
+   545→    [refreshSessions, toast]
+   546→  )
+   547→
+   548→  /** 停止当前 AI 生成（已生成的部分内容保留） */
+   549→  const stopGeneration = useCallback(() => {
+   550→    abortRef.current?.abort()
+   551→  }, [])
+   552→
+   553→  const clearChat = useCallback(async () => {
+   554→    const sessionId = activeSessionRef.current
+   555→    if (!sessionId) return
+   556→    try {
+   557→      const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`, {
+   558→        method: 'DELETE',
+   559→      })
+   560→      const data = await res.json()
+   561→      if (!res.ok) throw new Error(data.error ?? '清空失败')
+   562→      setMessages(data.messages ?? [])
+   563→      void refreshSessions()
+   564→    } catch (error) {
+   565→      toast({
+   566→        title: '清空失败',
+   567→        description: error instanceof Error ? error.message : '请稍后重试',
+   568→        variant: 'destructive',
+   569→      })
+   570→    }
+   571→  }, [refreshSessions, toast])
+   572→
+   573→  /** 把 AI 代码块应用到当前标签 */
+   574→  const applyCode = useCallback(
+   575→    (code: string) => {
+   576→      const tab = activeTabRef.current
+   577→      if (!tab) return
+   578→      setOpenTabs((prev) =>
+   579→        prev.map((t) => (t.id === tab.id ? { ...t, content: code } : t))
+   580→      )
+   581→      setTabStates((prev) => ({ ...prev, [tab.id]: 'dirty' }))
+   582→      scheduleSave(tab.id, code)
+   583→      toast({
+   584→        title: '已应用到编辑器',
+   585→        description: '代码已写入当前文件，即将自动保存',
+   586→      })
+   587→    },
+   588→    [scheduleSave, toast]
+   589→  )
+   590→
+   591→  /** 从全局搜索跳转：打开文件并定位到指定行 */
+   592→  const jumpToLine = useCallback(
+   593→    async (fileId: string, line: number) => {
+   594→      await openFile(fileId)
+   595→      setJumpTarget({ fileId, line, nonce: Date.now() })
+   596→    },
+   597→    [openFile]
+   598→  )
+   599→
+   600→  // ===== 视图 =====
+   601→  const fileTreeView = (
+   602→    <FileTree
+   603→      files={files}
+   604→      activeId={activeTabId}
+   605→      onOpen={openFile}
+   606→      onCreate={createFile}
+   607→      onRename={renameFile}
+   608→      onDelete={deleteFile}
+   609→      onQuickOpen={() => setQuickOpen(true)}
+   610→    />
+   611→  )
+   612→
+   613→  const editorView = (
+   614→    <CodeEditor
+   615→      tabs={openTabs}
+   616→      activeId={activeTabId}
+   617→      tabStates={tabStates}
+   618→      onSwitchTab={setActiveTabId}
+   619→      onCloseTab={closeTab}
+   620→      onChange={handleEditorChange}
+   621→      jumpTarget={jumpTarget}
+   622→      onSave={() => {
+   623→        const tab = activeTabRef.current
+   624→        if (!tab) return
+   625→        if (saveTimersRef.current[tab.id]) {
+   626→          clearTimeout(saveTimersRef.current[tab.id])
+   627→          delete saveTimersRef.current[tab.id]
+   628→        }
+   629→        void saveTab(tab.id)
+   630→      }}
+   631→    />
+   632→  )
+   633→
+   634→  const chatView = (
+   635→    <ChatPanel
+   636→      messages={messages}
+   637→      loading={chatLoading}
+   638→      streamingId={streamingId}
+   639→      activeFilePath={activeTab?.path ?? null}
+   640→      sessions={sessions}
+   641→      activeSessionId={activeSessionId}
+   642→      onSwitchSession={switchSession}
+   643→      onCreateSession={createSession}
+   644→      onRenameSession={renameSession}
+   645→      onDeleteSession={deleteSession}
+   646→      onSend={sendMessage}
+   647→      onStop={stopGeneration}
+   648→      onClear={clearChat}
+   649→      onApplyCode={applyCode}
+   650→    />
+   651→  )
+   652→
+   653→  /** 按目录分组供快速打开面板使用 */
+   654→  const quickOpenView = (
+   655→    <CommandDialog open={quickOpen} onOpenChange={setQuickOpen}>
+   656→      <CommandInput placeholder="输入文件名搜索…" />
+   657→      <CommandList>
+   658→        <CommandEmpty>没有匹配的文件</CommandEmpty>
+   659→        <CommandGroup heading="打开文件">
+   660→          {files.map((f) => (
+   661→            <CommandItem
+   662→              key={f.id}
+   663→              value={f.path}
+   664→              onSelect={() => {
+   665→                setQuickOpen(false)
+   666→                void openFile(f.id)
+   667→              }}
+   668→            >
+   669→              <FileCode2 className="h-4 w-4 text-clay" />
+   670→              <span className="truncate font-mono text-[13px]">{f.path}</span>
+   671→            </CommandItem>
+   672→          ))}
+   673→        </CommandGroup>
+   674→      </CommandList>
+   675→    </CommandDialog>
+   676→  )
+   677→
+   678→  return (
+   679→    <div className="flex h-screen flex-col overflow-hidden bg-background">
+   680→      {/* 快速打开文件（Ctrl/⌘ + P） */}
+   681→      {quickOpenView}
+   682→      {/* 全局搜索（Ctrl/⌘ + Shift + F） */}
+   683→      <GlobalSearch
+   684→        open={searchOpen}
+   685→        onOpenChange={setSearchOpen}
+   686→        onJump={(fileId, line) => void jumpToLine(fileId, line)}
+   687→      />
+   688→      {/* 顶栏 */}
+   689→      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
+   690→        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-clay">
+   691→          <Sparkles className="h-4 w-4 text-white" />
+   692→        </div>
+   693→        <div className="min-w-0">
+   694→          <h1 className="font-claude-serif truncate text-[15px] font-semibold leading-tight">
+   695→            Claude 风格 AI 编程工作台
+   696→          </h1>
+   697→          <p className="hidden text-[11px] leading-tight text-muted-foreground sm:block">
+   698→            类 Cline / Claude Code · 文件树 + 编辑器 + AI 对话
+   699→          </p>
+   700→        </div>
+   701→        <a
+   702→          href="/api/export"
+   703→          download
+   704→          className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+   705→          title="导出项目为 ZIP"
+   706→        >
+   707→          <Download className="h-4 w-4" />
+   708→          <span className="hidden sm:inline">导出</span>
+   709→        </a>
+   710→        <a
+   711→          href={REPO_URL}
+   712→          target="_blank"
+   713→          rel="noreferrer"
+   714→          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+   715→          title="在 GitHub 上查看源码"
+   716→        >
+   717→          <Github className="h-4 w-4" />
+   718→          <span className="hidden sm:inline">GitHub</span>
+   719→        </a>
+   720→      </header>
+   721→
+   722→      {initialLoading ? (
+   723→        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+   724→          <Loader2 className="h-4 w-4 animate-spin text-clay" /> 正在加载工作台…
+   725→        </div>
+   726→      ) : isMobile ? (
+   727→        /* 移动端：Tab 切换三栏 */
+   728→        <Tabs defaultValue="chat" className="flex min-h-0 flex-1 flex-col">
+   729→          <TabsList className="mx-3 mt-2 grid grid-cols-3">
+   730→            <TabsTrigger value="files" className="text-xs">文件</TabsTrigger>
+   731→            <TabsTrigger value="editor" className="text-xs">编辑器</TabsTrigger>
+   732→            <TabsTrigger value="chat" className="text-xs">AI 对话</TabsTrigger>
+   733→          </TabsList>
+   734→          <TabsContent value="files" className="min-h-0 flex-1 overflow-hidden">
+   735→            {fileTreeView}
+   736→          </TabsContent>
+   737→          <TabsContent value="editor" className="min-h-0 flex-1 overflow-hidden">
+   738→            {editorView}
+   739→          </TabsContent>
+   740→          <TabsContent value="chat" className="min-h-0 flex-1 overflow-hidden">
+   741→            {chatView}
+   742→          </TabsContent>
+   743→        </Tabs>
+   744→      ) : (
+   745→        /* 桌面端：可拖拽三栏 */
+   746→        <PanelGroup direction="horizontal" className="flex-1" autoSaveId="workspace-panels">
+   747→          <Panel defaultSize={19} minSize={13} className="bg-secondary/40">
+   748→            {fileTreeView}
+   749→          </Panel>
+   750→          <PanelResizeHandle className="w-px bg-border transition-colors data-[resize-handle-state=hover]:bg-clay data-[resize-handle-state=drag]:bg-clay" />
+   751→          <Panel defaultSize={46} minSize={25}>
+   752→            {editorView}
+   753→          </Panel>
+   754→          <PanelResizeHandle className="w-px bg-border transition-colors data-[resize-handle-state=hover]:bg-clay data-[resize-handle-state=drag]:bg-clay" />
+   755→          <Panel defaultSize={35} minSize={22} className="bg-secondary/20">
+   756→            {chatView}
+   757→          </Panel>
+   758→        </PanelGroup>
+   759→      )}
+   760→    </div>
+   761→  )
+   762→}
+   763→
