@@ -149,9 +149,9 @@ export function ChatPanel({
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
   // 会话列表搜索过滤
   const [sessionFilter, setSessionFilter] = useState('')
-  const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null)
-  const [renameTitle, setRenameTitle] = useState('')
-  const [renaming, setRenaming] = useState(false)
+  // 会话下拉行内重命名：点「重命名」铅笔后标题变输入框（Enter 保存 / Esc 或失焦取消），不再弹窗
+  const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
+  const [inlineRenameValue, setInlineRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
   // 消息级操作：复制反馈 / 内联编辑
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -421,14 +421,6 @@ export function ChatPanel({
     }
   }
 
-  const handleRename = async () => {
-    if (!renameTarget || !renameTitle.trim()) return
-    setRenaming(true)
-    const ok = await onRenameSession(renameTarget.id, renameTitle.trim())
-    setRenaming(false)
-    if (ok) setRenameTarget(null)
-  }
-
   /** 复制消息原文，短暂显示已复制 */
   const copyMessage = async (msg: ChatMsg) => {
     const ok = await copyTextToClipboard(msg.content)
@@ -519,11 +511,14 @@ export function ChatPanel({
           <PopoverTrigger asChild>
             <button
               className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent"
-              title="切换会话（双击快速重命名）"
+              title="切换会话（双击重命名）"
               onDoubleClick={() => {
                 if (!activeSession || loading) return
-                setRenameTarget(activeSession)
-                setRenameTitle(activeSession.title)
+                // 打开下拉并直接进入该会话的行内重命名
+                setSessionFilter('')
+                setSessionMenuOpen(true)
+                setInlineRenameId(activeSession.id)
+                setInlineRenameValue(activeSession.title)
               }}
             >
               <span className="font-claude-serif truncate text-[14px] font-semibold">
@@ -583,34 +578,62 @@ export function ChatPanel({
                         session.id === activeSessionId ? 'bg-clay/10' : 'hover:bg-accent'
                       }`}
                     >
-                      <button
-                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
-                        onClick={() => {
-                          setSessionMenuOpen(false)
-                          onSwitchSession(session.id)
-                        }}
-                      >
-                        {session.id === activeSessionId ? (
-                          <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
-                        ) : (
-                          <span className="h-3.5 w-3.5 shrink-0" />
-                        )}
-                        <span
-                          className={`truncate ${
-                            session.id === activeSessionId
-                              ? 'font-medium text-clay'
-                              : 'text-foreground/85'
-                          }`}
+                      {inlineRenameId === session.id ? (
+                        /* 行内重命名：替换标题按钮，避免嵌套交互；Enter 保存 / Esc 或失焦取消 */
+                        <div
+                          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1"
+                          onMouseDown={(e) => e.stopPropagation()}
                         >
-                          {session.title}
-                        </span>
-                        {session.pinned && (
-                          <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
-                        )}
-                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                          {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
-                        </span>
-                      </button>
+                          <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
+                          <Input
+                            value={inlineRenameValue}
+                            onChange={(e) => setInlineRenameValue(e.target.value)}
+                            className="h-6 flex-1 rounded border-border px-1.5 text-[13px]"
+                            maxLength={60}
+                            autoFocus
+                            onFocus={(e) => e.target.select()}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const v = inlineRenameValue.trim()
+                                if (v && v !== session.title) void onRenameSession(session.id, v)
+                                setInlineRenameId(null)
+                              } else if (e.key === 'Escape') {
+                                setInlineRenameId(null)
+                              }
+                            }}
+                            onBlur={() => setInlineRenameId(null)}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
+                          onClick={() => {
+                            setSessionMenuOpen(false)
+                            onSwitchSession(session.id)
+                          }}
+                        >
+                          {session.id === activeSessionId ? (
+                            <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
+                          ) : (
+                            <span className="h-3.5 w-3.5 shrink-0" />
+                          )}
+                          <span
+                            className={`truncate ${
+                              session.id === activeSessionId
+                                ? 'font-medium text-clay'
+                                : 'text-foreground/85'
+                            }`}
+                          >
+                            {session.title}
+                          </span>
+                          {session.pinned && (
+                            <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
+                          )}
+                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                            {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
+                          </span>
+                        </button>
+                      )}
                       <div className="flex shrink-0 items-center">
                         {session.pinned && (
                           <button
@@ -635,8 +658,8 @@ export function ChatPanel({
                             className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
                             title="重命名"
                             onClick={() => {
-                              setRenameTarget(session)
-                              setRenameTitle(session.title)
+                              setInlineRenameId(session.id)
+                              setInlineRenameValue(session.title)
                             }}
                           >
                             <Pencil className="h-3 w-3 text-muted-foreground" />
@@ -1112,30 +1135,6 @@ export function ChatPanel({
           )}
         </div>
       </div>
-
-      {/* 重命名会话 */}
-      <Dialog open={!!renameTarget} onOpenChange={(open) => !open && setRenameTarget(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-claude-serif">重命名会话</DialogTitle>
-          </DialogHeader>
-          <Input
-            value={renameTitle}
-            onChange={(e) => setRenameTitle(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-            maxLength={60}
-            autoFocus
-          />
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setRenameTarget(null)}>
-              取消
-            </Button>
-            <Button onClick={handleRename} disabled={renaming || !renameTitle.trim()}>
-              {renaming && <Loader2 className="h-4 w-4 animate-spin" />} 保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 删除会话确认 */}
       <AlertDialog

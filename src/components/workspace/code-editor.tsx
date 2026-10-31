@@ -488,6 +488,13 @@ export function CodeEditor({
                       setDraggingId(null)
                       setDropTargetId(null)
                     }}
+                    onMouseDown={(e) => {
+                      // 中键点击关闭标签（与 × 一致，走脏保存链路）；阻止浏览器自动滚动
+                      if (e.button === 1) {
+                        e.preventDefault()
+                        onCloseTab(tab.id)
+                      }
+                    }}
                     className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-grab items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
                       isActive
                         ? 'border-border bg-card font-medium text-foreground'

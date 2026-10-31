@@ -93,6 +93,12 @@ function buildTree(files: FileMeta[]): TreeNode[] {
   return sortNodes(root.children)
 }
 
+/** 统计节点内文件总数（含子孙目录） */
+function countFiles(node: TreeNode): number {
+  if (!node.isFolder) return 1
+  return node.children.reduce((sum, child) => sum + countFiles(child), 0)
+}
+
 function fileIcon(language: string) {
   if (language === 'json') return FileJson
   if (language === 'markdown') return FileText
@@ -240,6 +246,12 @@ export function FileTree({
               )}
               <FolderOpen className="h-3.5 w-3.5 shrink-0 text-clay" />
               <span className="truncate font-medium">{node.name}</span>
+              <span
+                className="ml-auto shrink-0 pr-0.5 text-[10px] tabular-nums text-muted-foreground/70"
+                title={`${countFiles(node)} 个文件`}
+              >
+                {countFiles(node)}
+              </span>
             </button>
             {isOpen && renderNodes(node.children, depth + 1)}
           </div>
