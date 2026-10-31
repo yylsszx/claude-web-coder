@@ -6,15 +6,19 @@ import {
   Copy,
   Download,
   Eraser,
+  FileCode2,
   Loader2,
   MessageSquarePlus,
+  Paperclip,
   Pencil,
+  Plus,
   RefreshCw,
   SendHorizonal,
   Sparkles,
   Square,
   Trash2,
   User,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -52,7 +56,8 @@ interface ChatPanelProps {
   onCreateSession: () => void
   onRenameSession: (id: string, title: string) => Promise<boolean>
   onDeleteSession: (id: string) => void
-  onSend: (message: string) => void
+  /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI */
+  onSend: (message: string, includeFile: boolean) => void
   onStop: () => void
   onClear: () => void
   onApplyCode: (code: string) => void
@@ -94,6 +99,13 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  // 当前文件是否作为上下文附加给 AI（切换文件时自动重新附加）
+  const [fileAttached, setFileAttached] = useState(true)
+  const [lastFilePath, setLastFilePath] = useState<string | null>(activeFilePath)
+  if (lastFilePath !== activeFilePath) {
+    setLastFilePath(activeFilePath)
+    setFileAttached(true)
+  }
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
   const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null)
   const [renameTitle, setRenameTitle] = useState('')
@@ -110,10 +122,11 @@ export function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length, loading, messages[messages.length - 1]?.content])
 
-  const send = (text: string) => {
+  /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件） */
+  const send = (text: string, forceIncludeFile?: boolean) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
-    onSend(trimmed)
+    onSend(trimmed, forceIncludeFile ?? (fileAttached && !!activeFilePath))
     setInput('')
   }
 
@@ -455,7 +468,7 @@ export function ChatPanel({
           <button
             key={action.label}
             className="rounded-full border border-border bg-card px-2.5 py-1 text-[11.5px] text-foreground/75 transition-colors hover:border-clay/50 hover:text-clay disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => send(action.prompt)}
+            onClick={() => send(action.prompt, true)}
             disabled={loading || !activeFilePath}
             title={activeFilePath ? action.prompt : '请先打开一个文件'}
           >
@@ -467,6 +480,32 @@ export function ChatPanel({
       {/* 输入区 */}
       <div className="px-3 pb-3">
         <div className="relative rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay/60">
+          {activeFilePath && (
+            <div className="flex items-center gap-2 px-3 pt-2.5">
+              <span
+                className={`flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors ${
+                  fileAttached
+                    ? 'border-clay/40 bg-clay/10 text-clay'
+                    : 'border-border bg-secondary/60 text-muted-foreground'
+                }`}
+              >
+                <Paperclip className="h-3 w-3 shrink-0" />
+                <FileCode2 className="h-3 w-3 shrink-0" />
+                <span className="truncate font-mono">{activeFilePath}</span>
+                <button
+                  className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-background/70"
+                  title={fileAttached ? '不把此文件发给 AI' : '重新附加此文件'}
+                  aria-label={fileAttached ? '移除文件上下文' : '附加文件上下文'}
+                  onClick={() => setFileAttached((v) => !v)}
+                >
+                  {fileAttached ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                </button>
+              </span>
+              <span className="shrink-0 text-[10.5px] text-muted-foreground">
+                {fileAttached ? 'AI 将读取该文件' : '已移除，AI 看不到该文件'}
+              </span>
+            </div>
+          )}
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

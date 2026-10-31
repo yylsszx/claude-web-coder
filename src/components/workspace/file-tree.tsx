@@ -9,6 +9,7 @@ import {
   FileJson,
   FilePlus2,
   FolderOpen,
+  Import,
   Loader2,
   MoreVertical,
   Pencil,
@@ -100,6 +101,9 @@ interface FileTreeProps {
   onRename: (id: string, newPath: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void>
   onQuickOpen: () => void
+  /** 拖拽本地文件到文件树导入工作区 */
+  onImportFiles: (dropped: File[]) => void
+  importingFiles: boolean
 }
 
 export function FileTree({
@@ -110,6 +114,8 @@ export function FileTree({
   onRename,
   onDelete,
   onQuickOpen,
+  onImportFiles,
+  importingFiles,
 }: FileTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [createOpen, setCreateOpen] = useState(false)
@@ -120,6 +126,8 @@ export function FileTree({
   const [renaming, setRenaming] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FileMeta | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // 拖拽本地文件悬停高亮
+  const [dragOver, setDragOver] = useState(false)
 
   const tree = useMemo(() => buildTree(files), [files])
 
@@ -242,7 +250,42 @@ export function FileTree({
     })
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onDragOver={(e) => {
+        e.preventDefault()
+        setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        // 仅在真正离开容器（而不是移入子元素）时取消高亮
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        const dropped = Array.from(e.dataTransfer.files)
+        if (dropped.length) onImportFiles(dropped)
+      }}
+    >
+      {(dragOver || importingFiles) && (
+        <div
+          className={`pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-clay/60 bg-background/85 backdrop-blur-[1px] ${
+            dragOver ? 'rounded-none' : ''
+          }`}
+        >
+          {importingFiles ? (
+            <Loader2 className="h-5 w-5 animate-spin text-clay" />
+          ) : (
+            <Import className="h-5 w-5 text-clay" />
+          )}
+          <p className="text-[12.5px] font-medium text-clay">
+            {importingFiles ? '正在导入…' : '松开导入到工作区'}
+          </p>
+          {!importingFiles && (
+            <p className="text-[10.5px] text-muted-foreground">重名文件自动加后缀，单个不超过 1MB</p>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="font-claude-serif text-[15px] font-semibold text-foreground">文件</h2>
         <div className="flex items-center gap-0.5">
@@ -271,7 +314,9 @@ export function FileTree({
       <div className="thin-scrollbar flex-1 overflow-y-auto px-2 pb-3">
         {files.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            暂无文件，点击右上角「+」新建
+            暂无文件，点击右上角「+」新建，
+            <br />
+            或把本地文件拖到这里导入
           </p>
         ) : (
           renderNodes(tree, 0)

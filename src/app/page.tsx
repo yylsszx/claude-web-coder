@@ -49,10 +49,11 @@ export default function WorkspacePage() {
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
   const [mobileTab, setMobileTab] = useState('chat')
 
-  // ===== 应用代码（diff 预览） / 存为新文件 =====
+  // ===== 应用代码（diff 预览） / 存为新文件 / 拖拽导入 =====
   const [diffState, setDiffState] = useState<{ path: string; original: string; code: string } | null>(null)
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
+  const [importingFiles, setImportingFiles] = useState(false)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -424,8 +425,14 @@ export default function WorkspacePage() {
 
   // ===== 聊天（流式，支持停止生成 / 重新生成 / 编辑重发） =====
   const runStream = useCallback(
-    async (opts: { message: string; regenerate?: boolean; editMessageId?: string }) => {
-      const { message, regenerate, editMessageId } = opts
+    async (opts: {
+      message: string
+      regenerate?: boolean
+      editMessageId?: string
+      /** 是否把当前打开的文件作为上下文发给 AI（默认 true；重新生成/编辑重发不受影响） */
+      includeFile?: boolean
+    }) => {
+      const { message, regenerate, editMessageId, includeFile = true } = opts
       // 防止并发请求：已有流式请求进行中时忽略
       if (abortRef.current) return
       const tempUserId = `tmp-u-${Date.now()}`
@@ -490,9 +497,10 @@ export default function WorkspacePage() {
             sessionId,
             regenerate,
             editMessageId,
-            currentFile: tab
-              ? { path: tab.path, content: tab.content, language: tab.language }
-              : null,
+            currentFile:
+              includeFile && tab
+                ? { path: tab.path, content: tab.content, language: tab.language }
+                : null,
           }),
         })
         if (!res.ok || !res.body) {
@@ -585,10 +593,10 @@ export default function WorkspacePage() {
     [refreshSessions, toast]
   )
 
-  /** 发送消息（普通模式） */
+  /** 发送消息（普通模式）；includeFile 由聊天面板附件 chip 控制 */
   const sendMessage = useCallback(
-    (message: string) => {
-      void runStream({ message })
+    (message: string, includeFile = true) => {
+      void runStream({ message, includeFile })
     },
     [runStream]
   )
@@ -767,6 +775,83 @@ export default function WorkspacePage() {
     [openFile]
   )
 
+  /** 拖拽本地文件到文件树导入工作区：重名自动加后缀，单文件限 1MB */
+  const importDroppedFiles = useCallback(
+    async (dropped: File[]) => {
+      const candidates = dropped.filter(
+        (f) => !(f.size === 0 && f.type === '' && !f.name.includes('.'))
+      )
+      if (!candidates.length) return
+      setImportingFiles(true)
+      try {
+        // 以服务端最新列表为准生成不冲突路径
+        const listRes = await fetch('/api/files')
+        const listData = await listRes.json()
+        const existing = new Set<string>(
+          listRes.ok ? ((listData.files ?? []) as FileMeta[]).map((f) => f.path) : []
+        )
+        const batch: { path: string; content: string }[] = []
+        const skipped: string[] = []
+        const renamed: string[] = []
+        for (const f of candidates) {
+          if (f.size > 1024 * 1024) {
+            skipped.push(`${f.name}（超过 1MB）`)
+            continue
+          }
+          try {
+            const content = await f.text()
+            let path = f.name
+            if (existing.has(path)) {
+              const dot = f.name.lastIndexOf('.')
+              const base = dot > 0 ? f.name.slice(0, dot) : f.name
+              const ext = dot > 0 ? f.name.slice(dot) : ''
+              let i = 1
+              while (existing.has(`${base}-${i}${ext}`)) i++
+              path = `${base}-${i}${ext}`
+              renamed.push(`${f.name} → ${path}`)
+            }
+            existing.add(path)
+            batch.push({ path, content })
+          } catch {
+            skipped.push(`${f.name}（无法读取）`)
+          }
+        }
+        let imported = 0
+        for (const item of batch) {
+          try {
+            const res = await fetch('/api/files', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item),
+            })
+            if (res.ok) {
+              imported++
+            } else {
+              skipped.push(item.path)
+            }
+          } catch {
+            skipped.push(item.path)
+          }
+        }
+        await refreshFiles()
+        const desc = [
+          renamed.length ? `重命名：${renamed.join('、')}` : '',
+          skipped.length ? `失败：${skipped.join('、')}` : '',
+        ]
+          .filter(Boolean)
+          .join('；')
+        if (imported > 0) {
+          toast({ title: `已导入 ${imported} 个文件`, description: desc || undefined })
+        } else {
+          toast({ title: '导入失败', description: desc || '请稍后重试', variant: 'destructive' })
+        }
+      } finally {
+        setImportingFiles(false)
+      }
+    },
+    [refreshFiles, toast]
+  )
+
   // ===== 视图 =====
   const fileTreeView = (
     <FileTree
@@ -777,6 +862,8 @@ export default function WorkspacePage() {
       onRename={renameFile}
       onDelete={deleteFile}
       onQuickOpen={() => setQuickOpen(true)}
+      onImportFiles={(dropped) => void importDroppedFiles(dropped)}
+      importingFiles={importingFiles}
     />
   )
 

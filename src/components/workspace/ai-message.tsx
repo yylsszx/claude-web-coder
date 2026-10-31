@@ -1,10 +1,10 @@
 'use client'
 
-import { memo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { Check, Copy, FileInput, FilePlus2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Copy, FileInput, FilePlus2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { copyTextToClipboard } from '@/lib/utils'
 
@@ -16,9 +16,16 @@ interface CodeBlockProps {
   onSaveAs?: (code: string, language: string) => void
 }
 
-/** 带操作栏的代码块：复制 / 应用到当前文件 / 存为新文件 */
+/** 超过此行数的代码块默认折叠 */
+const COLLAPSE_LINES = 28
+
+/** 带操作栏的代码块：复制 / 应用到当前文件 / 存为新文件；超长自动折叠 */
 function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const lines = useMemo(() => code.split('\n'), [code])
+  const collapsible = lines.length > COLLAPSE_LINES
+  const shownCode = collapsible && !expanded ? lines.slice(0, COLLAPSE_LINES).join('\n') : code
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(code)
@@ -80,8 +87,27 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlo
         }}
         wrapLongLines={false}
       >
-        {code}
+        {shownCode}
       </SyntaxHighlighter>
+      {collapsible && (
+        <button
+          className="flex w-full items-center justify-center gap-1 border-t border-border bg-secondary/40 py-1.5 text-[11.5px] text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-clay"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="h-3 w-3" />
+              收起
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3 w-3" />
+              展开全部 {lines.length} 行（剩余 {lines.length - COLLAPSE_LINES} 行）
+            </>
+          )}
+        </button>
+      )}
     </div>
   )
 }
