@@ -16,3 +16,10 @@ export interface ChatMsg {
   content: string
   createdAt: string
 }
+
+export interface SessionMeta {
+  id: string
+  title: string
+  messageCount: number
+  updatedAt: string
+}

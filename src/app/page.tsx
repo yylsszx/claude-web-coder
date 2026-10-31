@@ -2,14 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2 } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search } from 'lucide-react'
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
 import { CodeEditor, type SaveState } from '@/components/workspace/code-editor'
 import { ChatPanel } from '@/components/workspace/chat-panel'
-import type { ChatMsg, FileFull, FileMeta } from '@/lib/types'
+import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
 
@@ -25,9 +33,14 @@ export default function WorkspacePage() {
 
   // ===== 聊天状态 =====
   const [messages, setMessages] = useState<ChatMsg[]>([])
+  const [sessions, setSessions] = useState<SessionMeta[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
+
+  // ===== 快速打开 =====
+  const [quickOpen, setQuickOpen] = useState(false)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -39,22 +52,129 @@ export default function WorkspacePage() {
   openTabsRef.current = openTabs
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
+  const activeSessionRef = useRef(activeSessionId)
+  activeSessionRef.current = activeSessionId
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  // ===== 会话 =====
+  const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
+    const res = await fetch('/api/sessions')
+    const data = await res.json()
+    const list: SessionMeta[] = res.ok ? (data.sessions ?? []) : []
+    setSessions(list)
+    return list
+  }, [])
+
+  const loadMessages = useCallback(async (sessionId: string) => {
+    const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
+    const data = await res.json()
+    if (res.ok) setMessages(data.messages ?? [])
+  }, [])
+
+  const switchSession = useCallback(
+    async (id: string) => {
+      if (activeSessionRef.current === id) return
+      setActiveSessionId(id)
+      setStreamingId(null)
+      await loadMessages(id)
+    },
+    [loadMessages]
+  )
+
+  const createSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sessions', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? '创建失败')
+      await refreshSessions()
+      setActiveSessionId(data.session.id)
+      setMessages([])
+      setStreamingId(null)
+    } catch (error) {
+      toast({
+        title: '新建会话失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    }
+  }, [refreshSessions, toast])
+
+  const renameSession = useCallback(
+    async (id: string, title: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/sessions/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '重命名失败')
+        await refreshSessions()
+        return true
+      } catch (error) {
+        toast({
+          title: '重命名失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+        return false
+      }
+    },
+    [refreshSessions, toast]
+  )
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error ?? '删除失败')
+        }
+        const list = await refreshSessions()
+        if (activeSessionRef.current === id) {
+          const next = list[0]
+          if (next) {
+            setActiveSessionId(next.id)
+            await loadMessages(next.id)
+          } else {
+            setActiveSessionId(null)
+            setMessages([])
+          }
+        }
+        toast({ title: '会话已删除' })
+      } catch (error) {
+        toast({
+          title: '删除会话失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [loadMessages, refreshSessions, toast]
+  )
 
   // ===== 初始加载 =====
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const [filesRes, chatRes] = await Promise.all([
+        const [filesRes, sessionsRes] = await Promise.all([
           fetch('/api/files'),
-          fetch('/api/chat'),
+          fetch('/api/sessions'),
         ])
         const filesData = await filesRes.json()
-        const chatData = await chatRes.json()
+        const sessionsData = await sessionsRes.json()
         if (cancelled) return
         if (filesRes.ok) setFiles(filesData.files ?? [])
-        if (chatRes.ok) setMessages(chatData.messages ?? [])
+        const list: SessionMeta[] = sessionsRes.ok ? (sessionsData.sessions ?? []) : []
+        setSessions(list)
+        if (list.length > 0) {
+          setActiveSessionId(list[0].id)
+          const chatRes = await fetch(`/api/chat?sessionId=${encodeURIComponent(list[0].id)}`)
+          const chatData = await chatRes.json()
+          if (!cancelled && chatRes.ok) setMessages(chatData.messages ?? [])
+        }
       } finally {
         if (!cancelled) setInitialLoading(false)
       }
@@ -108,7 +228,7 @@ export default function WorkspacePage() {
     [saveTab]
   )
 
-  // Ctrl/⌘ + S 手动保存当前标签
+  // Ctrl/⌘ + P 快速打开文件；Ctrl/⌘ + S 手动保存当前标签
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -120,6 +240,9 @@ export default function WorkspacePage() {
           delete saveTimersRef.current[tab.id]
         }
         void saveTab(tab.id)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setQuickOpen((prev) => !prev)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -296,6 +419,7 @@ export default function WorkspacePage() {
       setStreamingId(streamId)
 
       const tab = activeTabRef.current
+      const sessionId = activeSessionRef.current
       let pending = ''
       let flushTimer: ReturnType<typeof setTimeout> | null = null
       const flush = () => {
@@ -314,6 +438,7 @@ export default function WorkspacePage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message,
+            sessionId,
             currentFile: tab
               ? { path: tab.path, content: tab.content, language: tab.language }
               : null,
@@ -328,7 +453,12 @@ export default function WorkspacePage() {
         const decoder = new TextDecoder()
         let buffer = ''
         let errorMsg: string | null = null
-        let doneIds: { userMessageId: string; assistantMessageId: string } | null = null
+        let doneIds: {
+          userMessageId: string
+          assistantMessageId: string
+          sessionId: string
+          sessionTitle: string
+        } | null = null
 
         while (true) {
           const { done, value } = await reader.read()
@@ -368,6 +498,8 @@ export default function WorkspacePage() {
                   : m
             )
           )
+          // 会话可能被服务端自动命名/更新，刷新列表
+          void refreshSessions()
         }
       } catch (error) {
         // 丢弃占位消息（含未完成的流式内容），提示错误
@@ -385,15 +517,20 @@ export default function WorkspacePage() {
         setStreamingId(null)
       }
     },
-    [toast]
+    [refreshSessions, toast]
   )
 
   const clearChat = useCallback(async () => {
+    const sessionId = activeSessionRef.current
+    if (!sessionId) return
     try {
-      const res = await fetch('/api/chat', { method: 'DELETE' })
+      const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? '清空失败')
       setMessages(data.messages ?? [])
+      void refreshSessions()
     } catch (error) {
       toast({
         title: '清空失败',
@@ -401,7 +538,7 @@ export default function WorkspacePage() {
         variant: 'destructive',
       })
     }
-  }, [toast])
+  }, [refreshSessions, toast])
 
   /** 把 AI 代码块应用到当前标签 */
   const applyCode = useCallback(
@@ -430,6 +567,7 @@ export default function WorkspacePage() {
       onCreate={createFile}
       onRename={renameFile}
       onDelete={deleteFile}
+      onQuickOpen={() => setQuickOpen(true)}
     />
   )
 
@@ -459,14 +597,47 @@ export default function WorkspacePage() {
       loading={chatLoading}
       streamingId={streamingId}
       activeFilePath={activeTab?.path ?? null}
+      sessions={sessions}
+      activeSessionId={activeSessionId}
+      onSwitchSession={switchSession}
+      onCreateSession={createSession}
+      onRenameSession={renameSession}
+      onDeleteSession={deleteSession}
       onSend={sendMessage}
       onClear={clearChat}
       onApplyCode={applyCode}
     />
   )
 
+  /** 按目录分组供快速打开面板使用 */
+  const quickOpenView = (
+    <CommandDialog open={quickOpen} onOpenChange={setQuickOpen}>
+      <CommandInput placeholder="输入文件名搜索…" />
+      <CommandList>
+        <CommandEmpty>没有匹配的文件</CommandEmpty>
+        <CommandGroup heading="打开文件">
+          {files.map((f) => (
+            <CommandItem
+              key={f.id}
+              value={f.path}
+              onSelect={() => {
+                setQuickOpen(false)
+                void openFile(f.id)
+              }}
+            >
+              <FileCode2 className="h-4 w-4 text-clay" />
+              <span className="truncate font-mono text-[13px]">{f.path}</span>
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      </CommandList>
+    </CommandDialog>
+  )
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
+      {/* 快速打开文件（Ctrl/⌘ + P） */}
+      {quickOpenView}
       {/* 顶栏 */}
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-clay">

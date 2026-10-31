@@ -1,17 +1,52 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eraser, Loader2, SendHorizonal, Sparkles, User } from 'lucide-react'
+import {
+  Check,
+  Eraser,
+  Loader2,
+  MessageSquarePlus,
+  Pencil,
+  SendHorizonal,
+  Sparkles,
+  Trash2,
+  User,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { AiMessage } from '@/components/workspace/ai-message'
-import type { ChatMsg } from '@/lib/types'
+import type { ChatMsg, SessionMeta } from '@/lib/types'
 
 interface ChatPanelProps {
   messages: ChatMsg[]
   loading: boolean
   streamingId: string | null
   activeFilePath: string | null
+  sessions: SessionMeta[]
+  activeSessionId: string | null
+  onSwitchSession: (id: string) => void
+  onCreateSession: () => void
+  onRenameSession: (id: string, title: string) => Promise<boolean>
+  onDeleteSession: (id: string) => void
   onSend: (message: string) => void
   onClear: () => void
   onApplyCode: (code: string) => void
@@ -28,12 +63,25 @@ export function ChatPanel({
   loading,
   streamingId,
   activeFilePath,
+  sessions,
+  activeSessionId,
+  onSwitchSession,
+  onCreateSession,
+  onRenameSession,
+  onDeleteSession,
   onSend,
   onClear,
   onApplyCode,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null)
+  const [renameTitle, setRenameTitle] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -55,20 +103,123 @@ export function ChatPanel({
     }
   }
 
+  const handleRename = async () => {
+    if (!renameTarget || !renameTitle.trim()) return
+    setRenaming(true)
+    const ok = await onRenameSession(renameTarget.id, renameTitle.trim())
+    setRenaming(false)
+    if (ok) setRenameTarget(null)
+  }
+
   return (
     <div className="flex h-full flex-col">
-      {/* 头部 */}
-      <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2.5">
-        <Sparkles className="h-4 w-4 text-clay" />
-        <h2 className="font-claude-serif text-[15px] font-semibold">AI 助手</h2>
+      {/* 头部：会话切换器 */}
+      <div className="flex items-center gap-1.5 border-b border-border bg-card px-3 py-2">
+        <Sparkles className="h-4 w-4 shrink-0 text-clay" />
+        <Popover open={sessionMenuOpen} onOpenChange={setSessionMenuOpen}>
+          <PopoverTrigger asChild>
+            <button
+              className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent"
+              title="切换会话"
+            >
+              <span className="font-claude-serif truncate text-[14px] font-semibold">
+                {activeSession?.title ?? '选择会话'}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {activeSession ? `${activeSession.messageCount} 条` : ''}
+              </span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72 p-1.5">
+            <button
+              className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-clay transition-colors hover:bg-accent"
+              onClick={() => {
+                setSessionMenuOpen(false)
+                onCreateSession()
+              }}
+            >
+              <MessageSquarePlus className="h-4 w-4" /> 新建会话
+            </button>
+            <div className="thin-scrollbar max-h-64 overflow-y-auto">
+              {sessions.map((session) => (
+                <div
+                  key={session.id}
+                  className={`group/session flex items-center rounded-md pr-0.5 transition-colors ${
+                    session.id === activeSessionId ? 'bg-clay/10' : 'hover:bg-accent'
+                  }`}
+                >
+                  <button
+                    className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
+                    onClick={() => {
+                      setSessionMenuOpen(false)
+                      onSwitchSession(session.id)
+                    }}
+                  >
+                    {session.id === activeSessionId ? (
+                      <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
+                    ) : (
+                      <span className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span
+                      className={`truncate ${
+                        session.id === activeSessionId
+                          ? 'font-medium text-clay'
+                          : 'text-foreground/85'
+                      }`}
+                    >
+                      {session.title}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {session.messageCount} 条
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/session:opacity-100">
+                    <button
+                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                      title="重命名"
+                      onClick={() => {
+                        setRenameTarget(session)
+                        setRenameTitle(session.title)
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 text-muted-foreground" />
+                    </button>
+                    <button
+                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                      title="删除会话"
+                      onClick={() => setDeleteTarget(session)}
+                    >
+                      <Trash2 className="h-3 w-3 text-destructive" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto h-7 w-7"
+          className="ml-auto h-7 w-7 shrink-0"
+          onClick={() => {
+            setSessionMenuOpen(false)
+            onCreateSession()
+          }}
+          disabled={loading}
+          aria-label="新建会话"
+          title="新建会话"
+        >
+          <MessageSquarePlus className="h-4 w-4 text-muted-foreground" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
           onClick={onClear}
           disabled={loading}
-          aria-label="清空对话"
-          title="清空对话"
+          aria-label="清空当前会话对话"
+          title="清空当前会话对话"
         >
           <Eraser className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
@@ -76,6 +227,16 @@ export function ChatPanel({
 
       {/* 消息列表 */}
       <div className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+        {messages.length === 0 && !loading && (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+            <Sparkles className="h-6 w-6 text-clay/60" />
+            <p className="font-claude-serif text-sm text-foreground/70">开始新的对话</p>
+            <p className="max-w-[220px] text-xs text-muted-foreground">
+              向 AI 描述需求，或打开文件后使用下方快捷指令
+            </p>
+          </div>
+        )}
+
         {messages.map((msg) => (
           <div key={msg.id} className="flex gap-2.5">
             <div
@@ -115,7 +276,7 @@ export function ChatPanel({
           </div>
         ))}
 
-        {loading && (
+        {loading && !messages.some((m) => isStreaming(m.id)) && (
           <div className="flex gap-2.5">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-clay/12">
               <Sparkles className="h-3.5 w-3.5 text-clay" />
@@ -173,6 +334,58 @@ export function ChatPanel({
           </Button>
         </div>
       </div>
+
+      {/* 重命名会话 */}
+      <Dialog open={!!renameTarget} onOpenChange={(open) => !open && setRenameTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-claude-serif">重命名会话</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={renameTitle}
+            onChange={(e) => setRenameTitle(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleRename()}
+            maxLength={60}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setRenameTarget(null)}>
+              取消
+            </Button>
+            <Button onClick={handleRename} disabled={renaming || !renameTitle.trim()}>
+              {renaming && <Loader2 className="h-4 w-4 animate-spin" />} 保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除会话确认 */}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-claude-serif">删除会话？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将永久删除「{deleteTarget?.title}」及其全部对话记录，此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault()
+                if (deleteTarget) onDeleteSession(deleteTarget.id)
+                setDeleteTarget(null)
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

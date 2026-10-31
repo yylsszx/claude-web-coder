@@ -12,6 +12,7 @@ import {
   Loader2,
   MoreVertical,
   Pencil,
+  Search,
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -98,6 +99,7 @@ interface FileTreeProps {
   onCreate: (path: string) => Promise<boolean>
   onRename: (id: string, newPath: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void>
+  onQuickOpen: () => void
 }
 
 export function FileTree({
@@ -107,6 +109,7 @@ export function FileTree({
   onCreate,
   onRename,
   onDelete,
+  onQuickOpen,
 }: FileTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [createOpen, setCreateOpen] = useState(false)
@@ -242,15 +245,27 @@ export function FileTree({
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="font-claude-serif text-[15px] font-semibold text-foreground">文件</h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={() => setCreateOpen(true)}
-          aria-label="新建文件"
-        >
-          <FilePlus2 className="h-4 w-4 text-muted-foreground" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onQuickOpen}
+            aria-label="搜索文件（Ctrl/⌘ + P）"
+            title="搜索文件（Ctrl/⌘ + P）"
+          >
+            <Search className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => setCreateOpen(true)}
+            aria-label="新建文件"
+          >
+            <FilePlus2 className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
       </div>
 
       <div className="thin-scrollbar flex-1 overflow-y-auto px-2 pb-3">

@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { getOrCreateDefaultSession } from '@/lib/session'
 
 const SAMPLE_FILES: { path: string; content: string; language: string }[] = [
   {
@@ -82,10 +83,11 @@ export async function ensureSeed() {
     await db.projectFile.createMany({ data: SAMPLE_FILES })
   }
 
-  const chatCount = await db.chatMessage.count()
-  if (chatCount === 0) {
+  const sessionCount = await db.chatSession.count()
+  if (sessionCount === 0) {
+    const session = await getOrCreateDefaultSession()
     await db.chatMessage.create({
-      data: { role: 'assistant', content: WELCOME_MESSAGE },
+      data: { sessionId: session.id, role: 'assistant', content: WELCOME_MESSAGE },
     })
   }
 }

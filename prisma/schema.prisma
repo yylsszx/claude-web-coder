@@ -17,10 +17,23 @@ model ProjectFile {
   updatedAt DateTime @updatedAt
 }
 
+// AI 对话会话
+model ChatSession {
+  id        String        @id @default(cuid())
+  title     String        @default("新会话")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+}
+
 // AI 对话消息
 model ChatMessage {
-  id        String   @id @default(cuid())
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   role      String // "user" | "assistant"
   content   String
-  createdAt DateTime @default(now())
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
 }

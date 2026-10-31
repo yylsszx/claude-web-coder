@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
 import { ensureSeed } from '@/lib/seed'
+import { deriveTitle, resolveSessionId } from '@/lib/session'
 
 const SYSTEM_PROMPT = `你是一个网页版 AI 编程工作台内置的编程助手，风格参考 Claude 与 Cline：
 - 始终使用中文回答，语气友好、专业、简洁。
@@ -12,22 +13,26 @@ const SYSTEM_PROMPT = `你是一个网页版 AI 编程工作台内置的编程�
 
 const HISTORY_LIMIT = 10
 
-/** GET /api/chat —— 读取聊天记录 */
-export async function GET() {
+const WELCOME_MESSAGE = `你好！我是你的 AI 编程助手 👋 我可以帮你生成、解释、优化代码。`
+
+/** GET /api/chat?sessionId= —— 读取指定会话的聊天记录 */
+export async function GET(request: NextRequest) {
   try {
     await ensureSeed()
+    const sessionId = await resolveSessionId(request.nextUrl.searchParams.get('sessionId'))
     const messages = await db.chatMessage.findMany({
+      where: { sessionId },
       orderBy: { createdAt: 'asc' },
-      take: 100,
+      take: 200,
     })
-    return NextResponse.json({ messages })
+    return NextResponse.json({ messages, sessionId })
   } catch (error) {
     console.error('GET /api/chat failed:', error)
     return NextResponse.json({ error: '获取聊天记录失败' }, { status: 500 })
   }
 }
 
-/** POST /api/chat —— 发送消息并获取 AI 回复 */
+/** POST /api/chat —— 非流式对话（保留兼容，前端主用 /api/chat/stream） */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -35,6 +40,7 @@ export async function POST(request: NextRequest) {
     if (!message) {
       return NextResponse.json({ error: '消息不能为空' }, { status: 400 })
     }
+    const sessionId = await resolveSessionId(body.sessionId)
 
     // 拼接当前文件上下文
     let userContent = message
@@ -51,6 +57,7 @@ export async function POST(request: NextRequest) {
 
     // 加载历史（不含本次输入）
     const history = await db.chatMessage.findMany({
+      where: { sessionId },
       orderBy: { createdAt: 'desc' },
       take: HISTORY_LIMIT,
     })
@@ -59,7 +66,7 @@ export async function POST(request: NextRequest) {
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
     const savedUserMessage = await db.chatMessage.create({
-      data: { role: 'user', content: message },
+      data: { sessionId, role: 'user', content: message },
     })
 
     const zai = await ZAI.create()
@@ -78,8 +85,9 @@ export async function POST(request: NextRequest) {
     }
 
     const savedAssistantMessage = await db.chatMessage.create({
-      data: { role: 'assistant', content: reply },
+      data: { sessionId, role: 'assistant', content: reply },
     })
+    await touchSession(sessionId, message)
 
     return NextResponse.json({
       userMessage: savedUserMessage,
@@ -88,22 +96,40 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST /api/chat failed:', error)
     const detail = error instanceof Error ? error.message : '未知错误'
-    return NextResponse.json(
-      { error: `AI 调用失败：${detail}` },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: `AI 调用失败：${detail}` }, { status: 500 })
   }
 }
 
-/** DELETE /api/chat —— 清空聊天记录 */
-export async function DELETE() {
+/** DELETE /api/chat?sessionId= —— 清空指定会话的聊天记录（保留会话，重置欢迎语） */
+export async function DELETE(request: NextRequest) {
   try {
-    await db.chatMessage.deleteMany({})
-    await ensureSeed() // 重新写入欢迎语
-    const messages = await db.chatMessage.findMany({ orderBy: { createdAt: 'asc' } })
-    return NextResponse.json({ messages })
+    const sessionId = await resolveSessionId(request.nextUrl.searchParams.get('sessionId'))
+    await db.chatMessage.deleteMany({ where: { sessionId } })
+    await db.chatMessage.create({
+      data: { sessionId, role: 'assistant', content: WELCOME_MESSAGE },
+    })
+    const messages = await db.chatMessage.findMany({
+      where: { sessionId },
+      orderBy: { createdAt: 'asc' },
+    })
+    return NextResponse.json({ messages, sessionId })
   } catch (error) {
     console.error('DELETE /api/chat failed:', error)
     return NextResponse.json({ error: '清空聊天记录失败' }, { status: 500 })
+  }
+}
+
+/** 会话有首条用户消息且标题仍为默认时自动命名，并刷新 updatedAt */
+async function touchSession(sessionId: string, firstUserMessage: string) {
+  try {
+    const session = await db.chatSession.findUnique({ where: { id: sessionId } })
+    if (!session) return
+    const data: { updatedAt?: Date; title?: string } = { updatedAt: new Date() }
+    if (session.title === '新会话') {
+      data.title = deriveTitle(firstUserMessage)
+    }
+    await db.chatSession.update({ where: { id: sessionId }, data })
+  } catch (error) {
+    console.error('touchSession failed:', error)
   }
 }

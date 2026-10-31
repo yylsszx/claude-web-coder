@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
+import { deriveTitle, resolveSessionId } from '@/lib/session'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -16,7 +17,7 @@ const HISTORY_LIMIT = 10
 
 type StreamFrame =
   | { t: 'delta'; v: string }
-  | { t: 'done'; userMessageId: string; assistantMessageId: string }
+  | { t: 'done'; userMessageId: string; assistantMessageId: string; sessionId: string; sessionTitle: string }
   | { t: 'error'; v: string }
 
 function sse(frame: StreamFrame): Uint8Array {
@@ -26,10 +27,12 @@ function sse(frame: StreamFrame): Uint8Array {
 /** POST /api/chat/stream —— 流式对话：上游 SSE 解析为增量帧，结束后持久化 */
 export async function POST(request: NextRequest) {
   let message = ''
+  let requestedSessionId: string | null = null
   let userContent = ''
   try {
     const body = await request.json()
     message = typeof body.message === 'string' ? body.message.trim() : ''
+    requestedSessionId = typeof body.sessionId === 'string' ? body.sessionId : null
     if (!message) {
       return Response.json({ error: '消息不能为空' }, { status: 400 })
     }
@@ -50,8 +53,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: '请求体解析失败' }, { status: 400 })
   }
 
-  // 历史与用户消息落库
+  // 会话解析：无效/未传时回退默认会话；历史与用户消息落库
+  const sessionId = await resolveSessionId(requestedSessionId)
   const history = await db.chatMessage.findMany({
+    where: { sessionId },
     orderBy: { createdAt: 'desc' },
     take: HISTORY_LIMIT,
   })
@@ -59,7 +64,7 @@ export async function POST(request: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
   const savedUserMessage = await db.chatMessage.create({
-    data: { role: 'user', content: message },
+    data: { sessionId, role: 'user', content: message },
   })
 
   let zai: Awaited<ReturnType<typeof ZAI.create>>
@@ -85,6 +90,20 @@ export async function POST(request: NextRequest) {
     const detail = error instanceof Error ? error.message : '未知错误'
     return Response.json({ error: `AI 调用失败：${detail}` }, { status: 500 })
   }
+
+  const touchSession = async () => {
+    try {
+      const session = await db.chatSession.findUnique({ where: { id: sessionId } })
+      if (!session) return
+      const data: { updatedAt?: Date; title?: string } = { updatedAt: new Date() }
+      if (session.title === '新会话') data.title = deriveTitle(message)
+      const updated = await db.chatSession.update({ where: { id: sessionId }, data })
+      sessionTitle = updated.title
+    } catch (error) {
+      console.error('touchSession failed:', error)
+    }
+  }
+  let sessionTitle = ''
 
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -127,13 +146,16 @@ export async function POST(request: NextRequest) {
         }
 
         const savedAssistantMessage = await db.chatMessage.create({
-          data: { role: 'assistant', content: full },
+          data: { sessionId, role: 'assistant', content: full },
         })
+        await touchSession()
         controller.enqueue(
           sse({
             t: 'done',
             userMessageId: savedUserMessage.id,
             assistantMessageId: savedAssistantMessage.id,
+            sessionId,
+            sessionTitle,
           })
         )
       } catch (error) {
@@ -141,13 +163,16 @@ export async function POST(request: NextRequest) {
         // 有部分内容时仍持久化，避免丢失
         if (full.trim()) {
           const partial = await db.chatMessage.create({
-            data: { role: 'assistant', content: full },
+            data: { sessionId, role: 'assistant', content: full },
           })
+          await touchSession()
           controller.enqueue(
             sse({
               t: 'done',
               userMessageId: savedUserMessage.id,
               assistantMessageId: partial.id,
+              sessionId,
+              sessionTitle,
             })
           )
         } else {
