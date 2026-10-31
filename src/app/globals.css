@@ -235,3 +235,29 @@
   padding: 0.3em 0.6em;
   font-size: 0.95em;
 }
+
+/* Markdown 文件预览（在 ai-markdown 基础上放大为文档排版） */
+.markdown-preview .ai-markdown {
+  font-size: 14.5px;
+  line-height: 1.8;
+}
+.markdown-preview .ai-markdown h1 {
+  font-size: 1.6em;
+  margin: 1em 0 0.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+.markdown-preview .ai-markdown h2 {
+  font-size: 1.35em;
+  margin: 0.9em 0 0.35em;
+}
+.markdown-preview .ai-markdown h3 {
+  font-size: 1.18em;
+  margin: 0.8em 0 0.3em;
+}
+.markdown-preview .ai-markdown p {
+  margin: 0.6em 0;
+}
+.markdown-preview .ai-markdown li {
+  margin: 0.25em 0;
+}

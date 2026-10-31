@@ -24,48 +24,80 @@ function sse(frame: StreamFrame): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(frame)}\n\n`)
 }
 
-/** POST /api/chat/stream —— 流式对话：上游 SSE 解析为增量帧，结束后持久化 */
+/** POST /api/chat/stream —— 流式对话：上游 SSE 解析为增量帧，结束后持久化
+ * regenerate=true 时复用会话中最后一条用户消息并删除其后的旧 AI 回复（重新生成）
+ */
 export async function POST(request: NextRequest) {
   let message = ''
   let requestedSessionId: string | null = null
-  let userContent = ''
+  let currentFile: { path: string; content: string; language?: string } | null = null
+  let regenerate = false
   try {
     const body = await request.json()
     message = typeof body.message === 'string' ? body.message.trim() : ''
     requestedSessionId = typeof body.sessionId === 'string' ? body.sessionId : null
+    regenerate = body.regenerate === true
     if (!message) {
       return Response.json({ error: '消息不能为空' }, { status: 400 })
     }
-
-    // 拼接当前文件上下文
-    userContent = message
     if (
       body.currentFile &&
       typeof body.currentFile.path === 'string' &&
       typeof body.currentFile.content === 'string'
     ) {
-      const { path, content, language } = body.currentFile
-      userContent +=
-        `\n\n---\n[当前打开的文件] ${path}（${language ?? 'plaintext'}）：\n` +
-        '```' + (language ?? '') + '\n' + content + '\n```'
+      currentFile = {
+        path: body.currentFile.path,
+        content: body.currentFile.content,
+        language: typeof body.currentFile.language === 'string' ? body.currentFile.language : undefined,
+      }
     }
   } catch {
     return Response.json({ error: '请求体解析失败' }, { status: 400 })
   }
 
-  // 会话解析：无效/未传时回退默认会话；历史与用户消息落库
+  // 会话解析：无效/未传时回退默认会话
   const sessionId = await resolveSessionId(requestedSessionId)
+
+  // 确定本次对话对应的用户消息：新建，或（重新生成时）复用最后一条用户消息
+  let savedUserMessage: { id: string; content: string; createdAt: Date }
+  if (regenerate) {
+    const lastUser = await db.chatMessage.findFirst({
+      where: { sessionId, role: 'user' },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (!lastUser) {
+      return Response.json({ error: '没有可重新生成的用户消息' }, { status: 400 })
+    }
+    // 删除该用户消息之后的所有旧 AI 回复，等待重新生成
+    await db.chatMessage.deleteMany({
+      where: { sessionId, role: 'assistant', createdAt: { gte: lastUser.createdAt } },
+    })
+    savedUserMessage = lastUser
+    message = lastUser.content
+  } else {
+    savedUserMessage = await db.chatMessage.create({
+      data: { sessionId, role: 'user', content: message },
+    })
+  }
+
+  // 历史：取该用户消息之前的最近 N 条（重新生成时自动排除已删除的旧回复）
   const history = await db.chatMessage.findMany({
-    where: { sessionId },
+    where: { sessionId, createdAt: { lt: savedUserMessage.createdAt } },
     orderBy: { createdAt: 'desc' },
     take: HISTORY_LIMIT,
   })
   const historyMessages = history
     .reverse()
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-  const savedUserMessage = await db.chatMessage.create({
-    data: { sessionId, role: 'user', content: message },
-  })
+
+  // 拼接当前文件上下文
+  let userContent = message
+  if (currentFile) {
+    const { path, content, language } = currentFile
+    userContent +=
+      `\n\n---\n[当前打开的文件] ${path}（${language ?? 'plaintext'}）：\n` +
+      '```' + (language ?? '') + '\n' + content + '\n```'
+  }
 
   let zai: Awaited<ReturnType<typeof ZAI.create>>
   let upstream: ReadableStream<Uint8Array>
@@ -86,7 +118,10 @@ export async function POST(request: NextRequest) {
     upstream = result
   } catch (error) {
     console.error('POST /api/chat/stream upstream failed:', error)
-    await db.chatMessage.delete({ where: { id: savedUserMessage.id } }).catch(() => {})
+    // 上游失败：普通发送时回滚用户消息；重新生成时保留原用户消息（旧回复已清，可直接重试）
+    if (!regenerate) {
+      await db.chatMessage.delete({ where: { id: savedUserMessage.id } }).catch(() => {})
+    }
     const detail = error instanceof Error ? error.message : '未知错误'
     return Response.json({ error: `AI 调用失败：${detail}` }, { status: 500 })
   }

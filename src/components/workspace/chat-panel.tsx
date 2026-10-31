@@ -7,6 +7,7 @@ import {
   Loader2,
   MessageSquarePlus,
   Pencil,
+  RefreshCw,
   SendHorizonal,
   Sparkles,
   Square,
@@ -52,6 +53,8 @@ interface ChatPanelProps {
   onStop: () => void
   onClear: () => void
   onApplyCode: (code: string) => void
+  /** 重新生成最后一条 AI 回复 */
+  onRegenerate: () => void
 }
 
 const QUICK_ACTIONS = [
@@ -75,6 +78,7 @@ export function ChatPanel({
   onStop,
   onClear,
   onApplyCode,
+  onRegenerate,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -98,6 +102,12 @@ export function ChatPanel({
   }
 
   const isStreaming = (id: string) => id === streamingId
+  const lastMsgIndex = messages.length - 1
+  const canRegenerate =
+    !loading &&
+    lastMsgIndex >= 1 &&
+    messages[lastMsgIndex]?.role === 'assistant' &&
+    messages.some((m) => m.role === 'user')
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -240,42 +250,54 @@ export function ChatPanel({
           </div>
         )}
 
-        {messages.map((msg) => (
-          <div key={msg.id} className="flex gap-2.5">
-            <div
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                msg.role === 'assistant' ? 'bg-clay/12' : 'bg-secondary'
-              }`}
-            >
-              {msg.role === 'assistant' ? (
-                <Sparkles className="h-3.5 w-3.5 text-clay" />
-              ) : (
-                <User className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
+        {messages.map((msg, idx) => (
+          <div key={msg.id}>
+            <div className="flex gap-2.5">
+              <div
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                  msg.role === 'assistant' ? 'bg-clay/12' : 'bg-secondary'
+                }`}
+              >
+                {msg.role === 'assistant' ? (
+                  <Sparkles className="h-3.5 w-3.5 text-clay" />
+                ) : (
+                  <User className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+              </div>
+              <div
+                className={`min-w-0 max-w-[calc(100%-42px)] rounded-xl px-3 py-2 ${
+                  msg.role === 'assistant'
+                    ? 'bg-card text-foreground'
+                    : 'bg-clay/10 text-foreground'
+                }`}
+              >
+                {msg.role === 'assistant' ? (
+                  <AiMessage
+                    content={
+                      isStreaming(msg.id)
+                        ? msg.content + (msg.content ? ' ▍' : '▍')
+                        : msg.content
+                    }
+                    onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
+                    applyDisabled={!activeFilePath}
+                  />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">
+                    {msg.content}
+                  </p>
+                )}
+              </div>
             </div>
-            <div
-              className={`min-w-0 max-w-[calc(100%-42px)] rounded-xl px-3 py-2 ${
-                msg.role === 'assistant'
-                  ? 'bg-card text-foreground'
-                  : 'bg-clay/10 text-foreground'
-              }`}
-            >
-              {msg.role === 'assistant' ? (
-                <AiMessage
-                  content={
-                    isStreaming(msg.id)
-                      ? msg.content + (msg.content ? ' ▍' : '▍')
-                      : msg.content
-                  }
-                  onApplyCode={isStreaming(msg.id) ? undefined : onApplyCode}
-                  applyDisabled={!activeFilePath}
-                />
-              ) : (
-                <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">
-                  {msg.content}
-                </p>
-              )}
-            </div>
+            {msg.role === 'assistant' && idx === lastMsgIndex && canRegenerate && (
+              <button
+                className="ml-[38px] mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                onClick={onRegenerate}
+                title="删除当前回复并重新生成"
+              >
+                <RefreshCw className="h-3 w-3" />
+                重新生成
+              </button>
+            )}
           </div>
         ))}
 

@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
-import { CodeEditor, type JumpTarget, type SaveState } from '@/components/workspace/code-editor'
+import { CodeEditor, type JumpTarget, type SaveState, type SelectionAction, type SelectionPayload } from '@/components/workspace/code-editor'
 import { ChatPanel } from '@/components/workspace/chat-panel'
 import { GlobalSearch } from '@/components/workspace/global-search'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
@@ -44,6 +44,8 @@ export default function WorkspacePage() {
   const [quickOpen, setQuickOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
+  // 移动端 Tab 受控（AI 选区操作时自动切到对话）
+  const [mobileTab, setMobileTab] = useState('chat')
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -59,6 +61,8 @@ export default function WorkspacePage() {
   activeSessionRef.current = activeSessionId
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const abortRef = useRef<AbortController | null>(null)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
 
   // ===== 会话 =====
   const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
@@ -411,17 +415,28 @@ export default function WorkspacePage() {
     [closeTab, refreshFiles, toast]
   )
 
-  // ===== 聊天（流式，支持停止生成） =====
-  const sendMessage = useCallback(
-    async (message: string) => {
+  // ===== 聊天（流式，支持停止生成与重新生成） =====
+  const runStream = useCallback(
+    async (opts: { message: string; regenerate?: boolean }) => {
+      const { message, regenerate } = opts
+      // 防止并发请求：已有流式请求进行中时忽略
+      if (abortRef.current) return
       const tempUserId = `tmp-u-${Date.now()}`
       const streamId = `tmp-a-${Date.now()}`
       const now = new Date().toISOString()
-      setMessages((prev) => [
-        ...prev,
-        { id: tempUserId, role: 'user', content: message, createdAt: now },
-        { id: streamId, role: 'assistant', content: '', createdAt: now },
-      ])
+      setMessages((prev) =>
+        regenerate
+          ? [
+              // 重新生成：用户消息已在界面中，仅追加流式占位
+              ...prev,
+              { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
+            ]
+          : [
+              ...prev,
+              { id: tempUserId, role: 'user' as const, content: message, createdAt: now },
+              { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
+            ]
+      )
       setChatLoading(true)
       setStreamingId(streamId)
 
@@ -450,6 +465,7 @@ export default function WorkspacePage() {
           body: JSON.stringify({
             message,
             sessionId,
+            regenerate,
             currentFile: tab
               ? { path: tab.path, content: tab.content, language: tab.language }
               : null,
@@ -545,6 +561,47 @@ export default function WorkspacePage() {
     [refreshSessions, toast]
   )
 
+  /** 发送消息（普通模式） */
+  const sendMessage = useCallback(
+    (message: string) => {
+      void runStream({ message })
+    },
+    [runStream]
+  )
+
+  /** 重新生成最后一条 AI 回复：复用服务端存储的最后一条用户消息 */
+  const regenerateLast = useCallback(async () => {
+    if (abortRef.current) return
+    const msgs = messagesRef.current
+    if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return
+    const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
+    if (!lastUser) return
+    // 移除最后一条 AI 回复，用户消息保留（服务端同步删除旧回复后重新流式生成）
+    setMessages(msgs.slice(0, -1))
+    await runStream({ message: lastUser.content, regenerate: true })
+  }, [runStream])
+
+  /** 编辑器选中代码 → AI 快捷处理（解释 / 优化 / 修复） */
+  const askAboutSelection = useCallback(
+    (action: SelectionAction, sel: SelectionPayload) => {
+      if (abortRef.current) return
+      const lineRange =
+        sel.fromLine === sel.toLine ? `第 ${sel.fromLine} 行` : `第 ${sel.fromLine}-${sel.toLine} 行`
+      const goal =
+        action === 'explain'
+          ? '逐段解释这段代码的作用'
+          : action === 'optimize'
+            ? '优化这段代码（可读性、性能与健壮性），给出优化后的完整片段并简述改动'
+            : '检查这段代码中的潜在 Bug 并给出修复后的完整片段'
+      const prompt =
+        `请${goal}。代码来自文件 ${sel.path} ${lineRange}：\n\n` +
+        '```' + sel.language + '\n' + sel.text + '\n```'
+      if (isMobile) setMobileTab('chat')
+      void runStream({ message: prompt })
+    },
+    [isMobile, runStream]
+  )
+
   /** 停止当前 AI 生成（已生成的部分内容保留） */
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort()
@@ -619,6 +676,8 @@ export default function WorkspacePage() {
       onCloseTab={closeTab}
       onChange={handleEditorChange}
       jumpTarget={jumpTarget}
+      onAskSelection={askAboutSelection}
+      askDisabled={chatLoading}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -647,6 +706,7 @@ export default function WorkspacePage() {
       onStop={stopGeneration}
       onClear={clearChat}
       onApplyCode={applyCode}
+      onRegenerate={() => void regenerateLast()}
     />
   )
 
@@ -724,8 +784,8 @@ export default function WorkspacePage() {
           <Loader2 className="h-4 w-4 animate-spin text-clay" /> 正在加载工作台…
         </div>
       ) : isMobile ? (
-        /* 移动端：Tab 切换三栏 */
-        <Tabs defaultValue="chat" className="flex min-h-0 flex-1 flex-col">
+        /* 移动端：Tab 切换三栏（受控，选区 AI 操作时自动切到对话） */
+        <Tabs value={mobileTab} onValueChange={setMobileTab} className="flex min-h-0 flex-1 flex-col">
           <TabsList className="mx-3 mt-2 grid grid-cols-3">
             <TabsTrigger value="files" className="text-xs">文件</TabsTrigger>
             <TabsTrigger value="editor" className="text-xs">编辑器</TabsTrigger>
