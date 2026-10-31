@@ -6,6 +6,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Check, Copy, FileInput, FilePlus2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { copyTextToClipboard } from '@/lib/utils'
 
 interface CodeBlockProps {
   language: string
@@ -20,12 +21,10 @@ function CodeBlock({ language, code, onApply, applyDisabled, onSaveAs }: CodeBlo
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code)
+    const ok = await copyTextToClipboard(code)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // 剪贴板不可用时静默失败
     }
   }
 

@@ -422,28 +422,44 @@ export default function WorkspacePage() {
     [closeTab, refreshFiles, toast]
   )
 
-  // ===== 聊天（流式，支持停止生成与重新生成） =====
+  // ===== 聊天（流式，支持停止生成 / 重新生成 / 编辑重发） =====
   const runStream = useCallback(
-    async (opts: { message: string; regenerate?: boolean }) => {
-      const { message, regenerate } = opts
+    async (opts: { message: string; regenerate?: boolean; editMessageId?: string }) => {
+      const { message, regenerate, editMessageId } = opts
       // 防止并发请求：已有流式请求进行中时忽略
       if (abortRef.current) return
       const tempUserId = `tmp-u-${Date.now()}`
       const streamId = `tmp-a-${Date.now()}`
       const now = new Date().toISOString()
-      setMessages((prev) =>
-        regenerate
-          ? [
-              // 重新生成：用户消息已在界面中，仅追加流式占位
+      setMessages((prev) => {
+        if (regenerate) {
+          // 重新生成：用户消息已在界面中，仅追加流式占位
+          return [
+            ...prev,
+            { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
+          ]
+        }
+        if (editMessageId) {
+          // 编辑重发：原地更新该用户消息内容，丢弃其后所有消息，追加流式占位
+          const idx = prev.findIndex((m) => m.id === editMessageId)
+          if (idx === -1) {
+            return [
               ...prev,
               { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
             ]
-          : [
-              ...prev,
-              { id: tempUserId, role: 'user' as const, content: message, createdAt: now },
-              { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
-            ]
-      )
+          }
+          return [
+            ...prev.slice(0, idx),
+            { ...prev[idx], content: message },
+            { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
+          ]
+        }
+        return [
+          ...prev,
+          { id: tempUserId, role: 'user' as const, content: message, createdAt: now },
+          { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
+        ]
+      })
       setChatLoading(true)
       setStreamingId(streamId)
 
@@ -473,6 +489,7 @@ export default function WorkspacePage() {
             message,
             sessionId,
             regenerate,
+            editMessageId,
             currentFile: tab
               ? { path: tab.path, content: tab.content, language: tab.language }
               : null,
@@ -587,6 +604,16 @@ export default function WorkspacePage() {
     setMessages(msgs.slice(0, -1))
     await runStream({ message: lastUser.content, regenerate: true })
   }, [runStream])
+
+  /** 编辑历史用户消息并重发：服务端更新该消息并丢弃其后所有消息，重新流式生成 */
+  const editAndResend = useCallback(
+    async (messageId: string, newContent: string) => {
+      const trimmed = newContent.trim()
+      if (!trimmed || abortRef.current) return
+      await runStream({ message: trimmed, editMessageId: messageId })
+    },
+    [runStream]
+  )
 
   /** 编辑器选中代码 → AI 快捷处理（解释 / 优化 / 修复） */
   const askAboutSelection = useCallback(
@@ -795,6 +822,7 @@ export default function WorkspacePage() {
       onRegenerate={() => void regenerateLast()}
       onSaveAsCode={openSaveAs}
       onExportChat={exportChat}
+      onEditResend={(id, content) => void editAndResend(id, content)}
     />
   )
 

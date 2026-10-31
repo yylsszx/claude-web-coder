@@ -26,17 +26,20 @@ function sse(frame: StreamFrame): Uint8Array {
 
 /** POST /api/chat/stream —— 流式对话：上游 SSE 解析为增量帧，结束后持久化
  * regenerate=true 时复用会话中最后一条用户消息并删除其后的旧 AI 回复（重新生成）
+ * editMessageId 传入时：更新该用户消息内容并删除其后所有消息，重新生成（编辑重发）
  */
 export async function POST(request: NextRequest) {
   let message = ''
   let requestedSessionId: string | null = null
   let currentFile: { path: string; content: string; language?: string } | null = null
   let regenerate = false
+  let editMessageId: string | null = null
   try {
     const body = await request.json()
     message = typeof body.message === 'string' ? body.message.trim() : ''
     requestedSessionId = typeof body.sessionId === 'string' ? body.sessionId : null
     regenerate = body.regenerate === true
+    editMessageId = typeof body.editMessageId === 'string' && body.editMessageId ? body.editMessageId : null
     if (!message) {
       return Response.json({ error: '消息不能为空' }, { status: 400 })
     }
@@ -58,9 +61,22 @@ export async function POST(request: NextRequest) {
   // 会话解析：无效/未传时回退默认会话
   const sessionId = await resolveSessionId(requestedSessionId)
 
-  // 确定本次对话对应的用户消息：新建，或（重新生成时）复用最后一条用户消息
+  // 确定本次对话对应的用户消息：新建 / 复用最后一条（重新生成）/ 编辑指定消息（编辑重发）
   let savedUserMessage: { id: string; content: string; createdAt: Date }
-  if (regenerate) {
+  if (editMessageId) {
+    const target = await db.chatMessage.findUnique({ where: { id: editMessageId } })
+    if (!target || target.sessionId !== sessionId || target.role !== 'user') {
+      return Response.json({ error: '找不到可编辑的用户消息' }, { status: 400 })
+    }
+    // 更新消息内容，并删除其后所有消息（含旧回复），随后重新流式生成
+    await db.chatMessage.deleteMany({
+      where: { sessionId, createdAt: { gt: target.createdAt } },
+    })
+    savedUserMessage = await db.chatMessage.update({
+      where: { id: target.id },
+      data: { content: message },
+    })
+  } else if (regenerate) {
     const lastUser = await db.chatMessage.findFirst({
       where: { sessionId, role: 'user' },
       orderBy: { createdAt: 'desc' },
@@ -118,8 +134,8 @@ export async function POST(request: NextRequest) {
     upstream = result
   } catch (error) {
     console.error('POST /api/chat/stream upstream failed:', error)
-    // 上游失败：普通发送时回滚用户消息；重新生成时保留原用户消息（旧回复已清，可直接重试）
-    if (!regenerate) {
+    // 上游失败：普通发送时回滚用户消息；重新生成/编辑重发时保留原用户消息（可直接重试）
+    if (!regenerate && !editMessageId) {
       await db.chatMessage.delete({ where: { id: savedUserMessage.id } }).catch(() => {})
     }
     const detail = error instanceof Error ? error.message : '未知错误'

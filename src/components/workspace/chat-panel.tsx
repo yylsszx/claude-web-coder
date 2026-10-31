@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Check,
+  Copy,
   Download,
   Eraser,
   Loader2,
@@ -37,6 +38,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { AiMessage } from '@/components/workspace/ai-message'
+import { copyTextToClipboard } from '@/lib/utils'
 import type { ChatMsg, SessionMeta } from '@/lib/types'
 
 interface ChatPanelProps {
@@ -60,6 +62,8 @@ interface ChatPanelProps {
   onSaveAsCode: (code: string, language: string) => void
   /** 导出当前会话为 Markdown */
   onExportChat: () => void
+  /** 编辑历史用户消息并重发（服务端丢弃其后所有消息） */
+  onEditResend: (messageId: string, newContent: string) => void
 }
 
 const QUICK_ACTIONS = [
@@ -86,6 +90,7 @@ export function ChatPanel({
   onRegenerate,
   onSaveAsCode,
   onExportChat,
+  onEditResend,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -94,6 +99,10 @@ export function ChatPanel({
   const [renameTitle, setRenameTitle] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
+  // 消息级操作：复制反馈 / 内联编辑
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingText, setEditingText] = useState('')
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
 
@@ -130,6 +139,37 @@ export function ChatPanel({
     setRenaming(false)
     if (ok) setRenameTarget(null)
   }
+
+  /** 复制消息原文，短暂显示已复制 */
+  const copyMessage = async (msg: ChatMsg) => {
+    const ok = await copyTextToClipboard(msg.content)
+    if (ok) {
+      setCopiedId(msg.id)
+      setTimeout(() => setCopiedId((cur) => (cur === msg.id ? null : cur)), 1500)
+    }
+  }
+
+  /** 开始编辑用户消息 */
+  const startEdit = (msg: ChatMsg) => {
+    setEditingId(msg.id)
+    setEditingText(msg.content)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditingText('')
+  }
+
+  /** 提交编辑并重发 */
+  const submitEdit = () => {
+    if (!editingId || !editingText.trim()) return
+    const id = editingId
+    cancelEdit()
+    onEditResend(id, editingText)
+  }
+
+  /** 用户消息可编辑：非流式中、非临时 ID（临时 ID 只在生成中断后出现） */
+  const canEdit = (msg: ChatMsg) => !loading && !msg.id.startsWith('tmp-')
 
   return (
     <div className="flex h-full flex-col">
@@ -269,7 +309,7 @@ export function ChatPanel({
         )}
 
         {messages.map((msg, idx) => (
-          <div key={msg.id}>
+          <div key={msg.id} className="group/msg">
             <div className="flex gap-2.5">
               <div
                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
@@ -286,7 +326,9 @@ export function ChatPanel({
                 className={`min-w-0 max-w-[calc(100%-42px)] rounded-xl px-3 py-2 ${
                   msg.role === 'assistant'
                     ? 'bg-card text-foreground'
-                    : 'bg-clay/10 text-foreground'
+                    : editingId === msg.id
+                      ? 'w-full max-w-none border border-clay/50 bg-card'
+                      : 'bg-clay/10 text-foreground'
                 }`}
               >
                 {msg.role === 'assistant' ? (
@@ -300,6 +342,46 @@ export function ChatPanel({
                     applyDisabled={!activeFilePath}
                     onSaveAsCode={isStreaming(msg.id) ? undefined : onSaveAsCode}
                   />
+                ) : editingId === msg.id ? (
+                  /* 内联编辑用户消息 */
+                  <div>
+                    <Textarea
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          cancelEdit()
+                        } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                          e.preventDefault()
+                          submitEdit()
+                        }
+                      }}
+                      className="min-h-[64px] resize-none border-0 bg-transparent text-[13.5px] focus-visible:ring-0"
+                      autoFocus
+                    />
+                    <div className="mt-1 flex items-center justify-end gap-1.5">
+                      <span className="mr-auto text-[10.5px] text-muted-foreground">
+                        保存并重发将丢弃此消息之后的所有对话
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={cancelEdit}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={submitEdit}
+                        disabled={!editingText.trim()}
+                      >
+                        保存并重发
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed">
                     {msg.content}
@@ -307,16 +389,49 @@ export function ChatPanel({
                 )}
               </div>
             </div>
-            {msg.role === 'assistant' && idx === lastMsgIndex && canRegenerate && (
-              <button
-                className="ml-[38px] mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
-                onClick={onRegenerate}
-                title="删除当前回复并重新生成"
-              >
-                <RefreshCw className="h-3 w-3" />
-                重新生成
-              </button>
-            )}
+            {/* 悬浮操作行：AI 回复复制 + 重新生成（仅最后一条）；用户消息编辑 */}
+            {msg.role === 'assistant' && !isStreaming(msg.id) ? (
+              <div className="ml-[38px] mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => void copyMessage(msg)}
+                  title="复制回复原文（Markdown）"
+                >
+                  {copiedId === msg.id ? (
+                    <>
+                      <Check className="h-3 w-3 text-green-600" />
+                      已复制
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      复制
+                    </>
+                  )}
+                </button>
+                {idx === lastMsgIndex && canRegenerate && (
+                  <button
+                    className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                    onClick={onRegenerate}
+                    title="删除当前回复并重新生成"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    重新生成
+                  </button>
+                )}
+              </div>
+            ) : msg.role === 'user' && editingId !== msg.id && canEdit(msg) ? (
+              <div className="ml-[38px] mt-1 flex items-center opacity-0 transition-opacity group-hover/msg:opacity-100">
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => startEdit(msg)}
+                  title="编辑此消息并重发（之后的对话将被丢弃）"
+                >
+                  <Pencil className="h-3 w-3" />
+                  编辑
+                </button>
+              </div>
+            ) : null}
           </div>
         ))}
 

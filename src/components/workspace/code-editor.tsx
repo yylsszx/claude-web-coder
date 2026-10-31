@@ -85,6 +85,15 @@ interface SelState {
   yBottom: number
 }
 
+/** 状态栏光标信息 */
+interface CursorInfo {
+  line: number
+  col: number
+  selLines: number
+  selChars: number
+  totalChars: number
+}
+
 type MdViewMode = 'edit' | 'split' | 'preview'
 
 const MD_VIEW_OPTIONS: { value: MdViewMode; label: string; icon: typeof Pencil }[] = [
@@ -125,6 +134,7 @@ export function CodeEditor({
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [selState, setSelState] = useState<SelState | null>(null)
   const [mdView, setMdView] = useState<MdViewMode>('edit')
+  const [cursorInfo, setCursorInfo] = useState<CursorInfo | null>(null)
 
   const file = useMemo(
     () => tabs.find((t) => t.id === activeId) ?? null,
@@ -166,45 +176,73 @@ export function CodeEditor({
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [selState])
 
-  // 跟踪编辑器选区：非空选区时记录文本、行号与浮动工具条坐标
-  const handleUpdate = useCallback((vu: ViewUpdate) => {
-    if (!vu.selectionSet && !vu.docChanged) return
-    const view = vu.view
-    const range = view.state.selection.main
-    if (range.empty) {
-      setSelState((prev) => (prev ? null : prev))
-      return
+  // 从当前视图同步状态栏光标信息
+  const syncCursor = useCallback((view: EditorView) => {
+    const sel = view.state.selection.main
+    const line = view.state.doc.lineAt(sel.head)
+    const next: CursorInfo = {
+      line: line.number,
+      col: sel.head - line.from + 1,
+      // 行数按选区两端所在行计算（与光标方向无关）
+      selLines: sel.empty ? 0 : view.state.doc.lineAt(sel.to).number - view.state.doc.lineAt(sel.from).number + 1,
+      selChars: sel.empty ? 0 : sel.to - sel.from,
+      totalChars: view.state.doc.length,
     }
-    const text = view.state.sliceDoc(range.from, range.to)
-    if (!text.trim()) {
-      setSelState((prev) => (prev ? null : prev))
-      return
-    }
-    const coords = view.coordsAtPos(range.head)
-    if (!coords) return
-    const next: SelState = {
-      from: range.from,
-      to: range.to,
-      text,
-      fromLine: view.state.doc.lineAt(range.from).number,
-      toLine: view.state.doc.lineAt(range.to).number,
-      x: coords.left,
-      yTop: coords.top,
-      yBottom: coords.bottom,
-    }
-    setSelState((prev) => {
-      if (
-        prev &&
-        prev.from === next.from &&
-        prev.to === next.to &&
-        Math.abs(prev.x - next.x) < 1 &&
-        Math.abs(prev.yTop - next.yTop) < 1
-      ) {
-        return prev
-      }
-      return next
-    })
+    setCursorInfo((prev) =>
+      prev &&
+      prev.line === next.line &&
+      prev.col === next.col &&
+      prev.selLines === next.selLines &&
+      prev.selChars === next.selChars &&
+      prev.totalChars === next.totalChars
+        ? prev
+        : next
+    )
   }, [])
+
+  // 跟踪编辑器选区：非空选区时记录文本、行号与浮动工具条坐标
+  const handleUpdate = useCallback(
+    (vu: ViewUpdate) => {
+      if (!vu.selectionSet && !vu.docChanged) return
+      const view = vu.view
+      syncCursor(view)
+      const range = view.state.selection.main
+      if (range.empty) {
+        setSelState((prev) => (prev ? null : prev))
+        return
+      }
+      const text = view.state.sliceDoc(range.from, range.to)
+      if (!text.trim()) {
+        setSelState((prev) => (prev ? null : prev))
+        return
+      }
+      const coords = view.coordsAtPos(range.head)
+      if (!coords) return
+      const next: SelState = {
+        from: range.from,
+        to: range.to,
+        text,
+        fromLine: view.state.doc.lineAt(range.from).number,
+        toLine: view.state.doc.lineAt(range.to).number,
+        x: coords.left,
+        yTop: coords.top,
+        yBottom: coords.bottom,
+      }
+      setSelState((prev) => {
+        if (
+          prev &&
+          prev.from === next.from &&
+          prev.to === next.to &&
+          Math.abs(prev.x - next.x) < 1 &&
+          Math.abs(prev.yTop - next.yTop) < 1
+        ) {
+          return prev
+        }
+        return next
+      })
+    },
+    [syncCursor]
+  )
 
   const askSelection = useCallback(
     (action: SelectionAction) => {
@@ -370,6 +408,7 @@ export function CodeEditor({
               onUpdate={handleUpdate}
               onCreateEditor={(view) => {
                 editorViewRef.current = view
+                syncCursor(view)
               }}
               basicSetup={{
                 lineNumbers: true,
@@ -394,6 +433,26 @@ export function CodeEditor({
           </>
         )}
       </div>
+
+      {/* 状态栏：光标位置 / 选区统计 / 字符数 */}
+      {cursorInfo && (
+        <div className="flex h-6 shrink-0 items-center gap-3 border-t border-border bg-secondary/40 px-3 text-[11px] text-muted-foreground">
+          {showEditor && (
+            <span>
+              行 {cursorInfo.line}，列 {cursorInfo.col}
+            </span>
+          )}
+          {showEditor && cursorInfo.selChars > 0 && (
+            <span className="text-clay">
+              已选 {cursorInfo.selLines > 1 ? `${cursorInfo.selLines} 行 / ` : ''}
+              {cursorInfo.selChars} 字符
+            </span>
+          )}
+          <span className="ml-auto">
+            共 {cursorInfo.totalChars.toLocaleString()} 字符
+          </span>
+        </div>
+      )}
 
       {/* 选中文本浮动 AI 工具条 */}
       {selState && (
