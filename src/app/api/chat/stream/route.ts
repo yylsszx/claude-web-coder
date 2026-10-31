@@ -111,6 +111,40 @@ export async function POST(request: NextRequest) {
       const reader = upstream.getReader()
       let buffer = ''
       let full = ''
+      let persistedId: string | null = null
+      let clientGone = request.signal.aborted
+
+      // 客户端断开（如点击「停止生成」）→ 取消上游读取，已生成部分照常落库
+      const onAbort = () => {
+        clientGone = true
+        reader.cancel().catch(() => {})
+      }
+      request.signal.addEventListener('abort', onAbort, { once: true })
+
+      // 客户端已断开时 enqueue 会抛错，吞掉即可（落库逻辑照常执行）
+      const safeEnqueue = (frame: Uint8Array) => {
+        try {
+          controller.enqueue(frame)
+        } catch {
+          // 连接已断开
+        }
+      }
+
+      // 只落库一次：无论正常结束、出错还是客户端断连
+      const persistPartial = async (): Promise<string | null> => {
+        if (persistedId || !full.trim()) return null
+        try {
+          const saved = await db.chatMessage.create({
+            data: { sessionId, role: 'assistant', content: full },
+          })
+          persistedId = saved.id
+          await touchSession()
+          return saved.id
+        } catch (error) {
+          console.error('persist assistant message failed:', error)
+          return null
+        }
+      }
 
       const flushLine = (line: string) => {
         const trimmed = line.trim()
@@ -123,7 +157,7 @@ export async function POST(request: NextRequest) {
             json.choices?.[0]?.delta?.content ?? json.choices?.[0]?.message?.content
           if (delta) {
             full += delta
-            controller.enqueue(sse({ t: 'delta', v: delta }))
+            safeEnqueue(sse({ t: 'delta', v: delta }))
           }
         } catch {
           // 忽略无法解析的行（如心跳注释）
@@ -131,7 +165,7 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        while (true) {
+        while (!clientGone) {
           const { done, value } = await reader.read()
           if (done) break
           buffer += decoder.decode(value, { stream: true })
@@ -139,49 +173,54 @@ export async function POST(request: NextRequest) {
           buffer = lines.pop() ?? ''
           for (const line of lines) flushLine(line)
         }
-        if (buffer) flushLine(buffer)
+        if (buffer && !clientGone) flushLine(buffer)
 
-        if (!full.trim()) {
-          throw new Error('AI 返回了空内容')
+        if (full.trim()) {
+          // 正常完成或中途停止：持久化完整/部分内容
+          const savedId = await persistPartial()
+          if (savedId) {
+            safeEnqueue(
+              sse({
+                t: 'done',
+                userMessageId: savedUserMessage.id,
+                assistantMessageId: savedId,
+                sessionId,
+                sessionTitle,
+              })
+            )
+          } else {
+            safeEnqueue(sse({ t: 'error', v: 'AI 结果保存失败' }))
+          }
+        } else {
+          safeEnqueue(
+            sse({ t: 'error', v: clientGone ? '已停止生成' : 'AI 返回了空内容' })
+          )
         }
-
-        const savedAssistantMessage = await db.chatMessage.create({
-          data: { sessionId, role: 'assistant', content: full },
-        })
-        await touchSession()
-        controller.enqueue(
-          sse({
-            t: 'done',
-            userMessageId: savedUserMessage.id,
-            assistantMessageId: savedAssistantMessage.id,
-            sessionId,
-            sessionTitle,
-          })
-        )
       } catch (error) {
         console.error('stream processing failed:', error)
-        // 有部分内容时仍持久化，避免丢失
-        if (full.trim()) {
-          const partial = await db.chatMessage.create({
-            data: { sessionId, role: 'assistant', content: full },
-          })
-          await touchSession()
-          controller.enqueue(
+        const savedId = await persistPartial()
+        if (savedId) {
+          safeEnqueue(
             sse({
               t: 'done',
               userMessageId: savedUserMessage.id,
-              assistantMessageId: partial.id,
+              assistantMessageId: savedId,
               sessionId,
               sessionTitle,
             })
           )
         } else {
-          controller.enqueue(
+          safeEnqueue(
             sse({ t: 'error', v: error instanceof Error ? error.message : '流式传输失败' })
           )
         }
       } finally {
-        controller.close()
+        request.signal.removeEventListener('abort', onAbort)
+        try {
+          controller.close()
+        } catch {
+          // 连接已断开
+        }
       }
     },
   })

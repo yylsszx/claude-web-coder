@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -15,8 +15,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
-import { CodeEditor, type SaveState } from '@/components/workspace/code-editor'
+import { CodeEditor, type JumpTarget, type SaveState } from '@/components/workspace/code-editor'
 import { ChatPanel } from '@/components/workspace/chat-panel'
+import { GlobalSearch } from '@/components/workspace/global-search'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
@@ -39,8 +40,10 @@ export default function WorkspacePage() {
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
 
-  // ===== 快速打开 =====
+  // ===== 快速打开 / 全局搜索 / 跳转 =====
   const [quickOpen, setQuickOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
 
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -55,6 +58,7 @@ export default function WorkspacePage() {
   const activeSessionRef = useRef(activeSessionId)
   activeSessionRef.current = activeSessionId
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const abortRef = useRef<AbortController | null>(null)
 
   // ===== 会话 =====
   const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
@@ -228,7 +232,7 @@ export default function WorkspacePage() {
     [saveTab]
   )
 
-  // Ctrl/⌘ + P 快速打开文件；Ctrl/⌘ + S 手动保存当前标签
+  // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 手动保存当前标签
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -243,6 +247,9 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault()
         setQuickOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -404,7 +411,7 @@ export default function WorkspacePage() {
     [closeTab, refreshFiles, toast]
   )
 
-  // ===== 聊天（流式） =====
+  // ===== 聊天（流式，支持停止生成） =====
   const sendMessage = useCallback(
     async (message: string) => {
       const tempUserId = `tmp-u-${Date.now()}`
@@ -417,6 +424,9 @@ export default function WorkspacePage() {
       ])
       setChatLoading(true)
       setStreamingId(streamId)
+
+      const controller = new AbortController()
+      abortRef.current = controller
 
       const tab = activeTabRef.current
       const sessionId = activeSessionRef.current
@@ -436,6 +446,7 @@ export default function WorkspacePage() {
         const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             message,
             sessionId,
@@ -502,23 +513,42 @@ export default function WorkspacePage() {
           void refreshSessions()
         }
       } catch (error) {
-        // 丢弃占位消息（含未完成的流式内容），提示错误
-        if (flushTimer) clearTimeout(flushTimer)
-        setMessages((prev) =>
-          prev.filter((m) => m.id !== streamId && m.id !== tempUserId)
-        )
-        toast({
-          title: 'AI 调用失败',
-          description: error instanceof Error ? error.message : '请稍后重试',
-          variant: 'destructive',
-        })
+        if (flushTimer) {
+          clearTimeout(flushTimer)
+          flushTimer = null
+        }
+        if (controller.signal.aborted) {
+          // 用户点击「停止生成」：保留用户消息与已流出的部分内容
+          flush()
+          setMessages((prev) =>
+            prev.filter((m) => m.id !== streamId || m.content.trim() !== '')
+          )
+          void refreshSessions()
+          toast({ title: '已停止生成', description: '已生成的部分内容将保留' })
+        } else {
+          // 真实错误：丢弃占位消息，提示错误
+          setMessages((prev) =>
+            prev.filter((m) => m.id !== streamId && m.id !== tempUserId)
+          )
+          toast({
+            title: 'AI 调用失败',
+            description: error instanceof Error ? error.message : '请稍后重试',
+            variant: 'destructive',
+          })
+        }
       } finally {
+        abortRef.current = null
         setChatLoading(false)
         setStreamingId(null)
       }
     },
     [refreshSessions, toast]
   )
+
+  /** 停止当前 AI 生成（已生成的部分内容保留） */
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
 
   const clearChat = useCallback(async () => {
     const sessionId = activeSessionRef.current
@@ -558,6 +588,15 @@ export default function WorkspacePage() {
     [scheduleSave, toast]
   )
 
+  /** 从全局搜索跳转：打开文件并定位到指定行 */
+  const jumpToLine = useCallback(
+    async (fileId: string, line: number) => {
+      await openFile(fileId)
+      setJumpTarget({ fileId, line, nonce: Date.now() })
+    },
+    [openFile]
+  )
+
   // ===== 视图 =====
   const fileTreeView = (
     <FileTree
@@ -579,6 +618,7 @@ export default function WorkspacePage() {
       onSwitchTab={setActiveTabId}
       onCloseTab={closeTab}
       onChange={handleEditorChange}
+      jumpTarget={jumpTarget}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -604,6 +644,7 @@ export default function WorkspacePage() {
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
       onSend={sendMessage}
+      onStop={stopGeneration}
       onClear={clearChat}
       onApplyCode={applyCode}
     />
@@ -638,6 +679,12 @@ export default function WorkspacePage() {
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       {/* 快速打开文件（Ctrl/⌘ + P） */}
       {quickOpenView}
+      {/* 全局搜索（Ctrl/⌘ + Shift + F） */}
+      <GlobalSearch
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        onJump={(fileId, line) => void jumpToLine(fileId, line)}
+      />
       {/* 顶栏 */}
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-card px-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-clay">
@@ -652,10 +699,19 @@ export default function WorkspacePage() {
           </p>
         </div>
         <a
+          href="/api/export"
+          download
+          className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="导出项目为 ZIP"
+        >
+          <Download className="h-4 w-4" />
+          <span className="hidden sm:inline">导出</span>
+        </a>
+        <a
           href={REPO_URL}
           target="_blank"
           rel="noreferrer"
-          className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="在 GitHub 上查看源码"
         >
           <Github className="h-4 w-4" />

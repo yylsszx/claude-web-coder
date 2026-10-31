@@ -1,7 +1,9 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
+import { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { html } from '@codemirror/lang-html'
@@ -40,6 +42,13 @@ const LANGUAGE_LABELS: Record<string, string> = {
 
 export type SaveState = 'saved' | 'dirty' | 'saving'
 
+/** 跳转到指定文件的指定行（nonce 变化触发跳转） */
+export interface JumpTarget {
+  fileId: string
+  line: number
+  nonce: number
+}
+
 interface CodeEditorProps {
   tabs: FileFull[]
   activeId: string | null
@@ -48,6 +57,7 @@ interface CodeEditorProps {
   onCloseTab: (id: string) => void
   onChange: (value: string) => void
   onSave: () => void
+  jumpTarget?: JumpTarget | null
 }
 
 export function CodeEditor({
@@ -58,11 +68,28 @@ export function CodeEditor({
   onCloseTab,
   onChange,
   onSave,
+  jumpTarget,
 }: CodeEditorProps) {
+  const editorViewRef = useRef<EditorView | null>(null)
+
   const file = useMemo(
     () => tabs.find((t) => t.id === activeId) ?? null,
     [tabs, activeId]
   )
+
+  // 跳转到指定行（全局搜索命中后调用）：光标定位 + 居中滚动 + 焦点
+  useEffect(() => {
+    if (!jumpTarget || !file || file.id !== jumpTarget.fileId) return
+    const view = editorViewRef.current
+    if (!view) return
+    const lineNo = Math.min(Math.max(1, jumpTarget.line), view.state.doc.lines)
+    const lineInfo = view.state.doc.line(lineNo)
+    view.dispatch({
+      selection: EditorSelection.cursor(lineInfo.from),
+      effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+    })
+    view.focus()
+  }, [jumpTarget, file])
 
   const language = file?.language
   const extensions = useMemo<Extension[]>(() => {
@@ -172,6 +199,9 @@ export function CodeEditor({
           theme="light"
           extensions={extensions}
           onChange={onChange}
+          onCreateEditor={(view) => {
+            editorViewRef.current = view
+          }}
           basicSetup={{
             lineNumbers: true,
             highlightActiveLine: true,

@@ -9,6 +9,7 @@ import {
   Pencil,
   SendHorizonal,
   Sparkles,
+  Square,
   Trash2,
   User,
 } from 'lucide-react'
@@ -48,6 +49,7 @@ interface ChatPanelProps {
   onRenameSession: (id: string, title: string) => Promise<boolean>
   onDeleteSession: (id: string) => void
   onSend: (message: string) => void
+  onStop: () => void
   onClear: () => void
   onApplyCode: (code: string) => void
 }
@@ -70,6 +72,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onSend,
+  onStop,
   onClear,
   onApplyCode,
 }: ChatPanelProps) {
@@ -319,19 +322,28 @@ export function ChatPanel({
             }
             className="min-h-[72px] resize-none border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
           />
-          <Button
-            size="icon"
-            className="absolute bottom-2.5 right-2.5 h-8 w-8 rounded-lg"
-            onClick={() => send(input)}
-            disabled={loading || !input.trim()}
-            aria-label="发送"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
+          {loading ? (
+            <Button
+              size="icon"
+              variant="secondary"
+              className="absolute bottom-2.5 right-2.5 h-8 w-8 rounded-lg border border-border"
+              onClick={onStop}
+              aria-label="停止生成"
+              title="停止生成"
+            >
+              <Square className="h-3 w-3 fill-current text-clay" />
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              className="absolute bottom-2.5 right-2.5 h-8 w-8 rounded-lg"
+              onClick={() => send(input)}
+              disabled={!input.trim()}
+              aria-label="发送"
+            >
               <SendHorizonal className="h-4 w-4" />
-            )}
-          </Button>
+            </Button>
+          )}
         </div>
       </div>
 
