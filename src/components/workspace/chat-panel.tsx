@@ -75,6 +75,8 @@ interface ChatPanelProps {
   onRegenerate: () => void
   /** 把代码块保存为新文件 */
   onSaveAsCode: (code: string, language: string) => void
+  /** 打开指定文件（AI 回复中文件路径点击时调用） */
+  onOpenFile: (id: string) => void
   /** 插入到编辑器当前光标位置（无打开文件时禁用） */
   onInsertCode?: (code: string) => void
   /** 批量应用：依次为每段代码选目标并 diff 确认 */
@@ -155,6 +157,7 @@ export function ChatPanel({
   onApplyCode,
   onRegenerate,
   onSaveAsCode,
+  onOpenFile,
   onInsertCode,
   onApplyAll,
   onExportChat,
@@ -1120,6 +1123,8 @@ export function ChatPanel({
                           ? undefined
                           : (newContent) => onToggleTaskContent(msg.id, newContent, msg.content)
                       }
+                      knownFiles={files.map((f) => ({ id: f.id, path: f.path }))}
+                      onOpenFile={onOpenFile}
                     />
                     {isStreaming(msg.id) && elapsedSec !== null && (
                       <div

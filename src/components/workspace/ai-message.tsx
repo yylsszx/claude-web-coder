@@ -307,6 +307,10 @@ interface AiMessageProps {
   streaming?: boolean;
   /** 勾选 / 取消任务列表项：传入后 checkbox 可交互（回调得到替换后的完整 Markdown）；流式生成中不传 → 只读 */
   onToggleTask?: (newContent: string) => void;
+  /** 工作区已知文件列表：行内代码命中文件路径时点亮为可点击 */
+  knownFiles?: { id: string; path: string }[];
+  /** 点击命中的文件回调（打开该文件）；与 knownFiles 同时传入才生效 */
+  onOpenFile?: (id: string) => void;
 }
 
 /** 折叠阈值：内容超过此高度显示「展开全文」（px） */
@@ -331,6 +335,25 @@ function findTaskLineIdx(content: string, nth: number): number | null {
     }
   }
   return null;
+}
+
+/** inline 代码是否命中已知文件：精确路径优先，其次唯一 basename（必须含扩展名，避免误点普通单词）；同名多文件不点亮防歧义 */
+function matchKnownFile(
+  text: string,
+  files: AiMessageProps["knownFiles"],
+): string | null {
+  if (!files || files.length === 0) return null;
+  const v = text.trim();
+  if (!v || v.length > 120 || /\s/.test(v)) return null;
+  const exact = files.find((f) => f.path === v);
+  if (exact) return exact.id;
+  if (!v.includes(".")) return null;
+  const base = v.split("/").pop()!.toLowerCase();
+  const hits = files.filter(
+    (f) =>
+      f.path.toLowerCase() === base || f.path.toLowerCase().endsWith("/" + base),
+  );
+  return hits.length === 1 ? hits[0].id : null;
 }
 
 /** 统计 content 中的 GFM 任务项总数与已完成数（与 findTaskLineIdx 同款判定：跳过 ``` / ~~~ 围栏内假任务行，缩进限 0-3 空格排除缩进代码块） */
@@ -366,6 +389,8 @@ export const AiMessage = memo(function AiMessage({
   showBatchTools,
   streaming = false,
   onToggleTask,
+  knownFiles,
+  onOpenFile,
 }: AiMessageProps) {
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
   // 任务列表进度：有任务项时在内容底部显示「任务 2/5」+ 迷你进度条（勾选后随 content 实时刷新）
@@ -531,6 +556,23 @@ export const AiMessage = memo(function AiMessage({
                       onInsert={onInsertCode}
                       insertDisabled={insertDisabled}
                     />
+                  );
+                }
+                // 行内代码命中工作区文件路径 → 点亮为可点击按钮（打开该文件）；
+                // 保留 <code> 标签以继承既有行内代码样式，button 仅负责交互
+                const fileId = matchKnownFile(String(children ?? ""), knownFiles);
+                if (fileId && onOpenFile) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => onOpenFile(fileId)}
+                      title={`打开 ${String(children).trim()}`}
+                      className="inline-flex cursor-pointer items-center rounded transition-shadow hover:ring-1 hover:ring-clay/60"
+                    >
+                      <code className="text-clay underline decoration-clay/40 underline-offset-2 hover:decoration-clay">
+                        {children}
+                      </code>
+                    </button>
                   );
                 }
                 return <code className={className}>{children}</code>;

@@ -159,6 +159,8 @@ interface FileTreeProps {
   onCreate: (path: string) => Promise<boolean>
   onRename: (id: string, newPath: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void>
+  /** 拖拽移动文件到目录（拼 newPath 走重命名链路） */
+  onMoveFile?: (fileId: string, dirPath: string) => Promise<boolean>
   onQuickOpen: () => void
   /** 拖拽本地文件到文件树导入工作区 */
   onImportFiles: (dropped: File[]) => void
@@ -173,6 +175,7 @@ export function FileTree({
   onCreate,
   onRename,
   onDelete,
+  onMoveFile,
   onQuickOpen,
   onImportFiles,
   importingFiles,
@@ -199,6 +202,10 @@ export function FileTree({
   }, [activeId])
   // 拖拽本地文件悬停高亮
   const [dragOver, setDragOver] = useState(false)
+  // 内部拖拽移动：悬停的目录路径（目录行高亮用）
+  const [dragOverDir, setDragOverDir] = useState<string | null>(null)
+  /** dataTransfer 自定义类型：标记拖拽源为本工作区文件（与外部文件导入区分） */
+  const FILE_ID_TYPE = 'application/cw-file-id'
 
   const tree = useMemo(() => buildTree(files), [files])
 
@@ -236,18 +243,39 @@ export function FileTree({
     setDeleteTarget(null)
   }
 
-  const renderNodes = (nodes: TreeNode[], depth: number) =>
+  const renderNodes = (nodes: TreeNode[], depth: number, prefix = '') =>
     nodes.map((node) => {
-      const nodePath = node.isFolder ? `${node.name}/` : node.file!.path
+      const nodePath = node.isFolder ? `${prefix}${node.name}/` : node.file!.path
       const isOpen = expanded.has(nodePath)
 
       if (node.isFolder) {
+        const dirPath = `${prefix}${node.name}`
         return (
           <div key={nodePath}>
             <button
-              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-foreground/80 hover:bg-accent transition-colors"
+              className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-foreground/80 hover:bg-accent transition-colors ${
+                dragOverDir === nodePath ? 'bg-clay/10 ring-1 ring-inset ring-clay/70' : ''
+              }`}
               style={{ paddingLeft: `${8 + depth * 14}px` }}
               onClick={() => toggleFolder(nodePath)}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes(FILE_ID_TYPE)) {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  setDragOverDir(nodePath)
+                }
+              }}
+              onDragLeave={() => {
+                setDragOverDir((cur) => (cur === nodePath ? null : cur))
+              }}
+              onDrop={(e) => {
+                const fid = e.dataTransfer.getData(FILE_ID_TYPE)
+                if (!fid) return // 外部文件拖入：不拦截，冒泡给根容器走导入
+                e.preventDefault()
+                e.stopPropagation()
+                setDragOverDir(null)
+                void onMoveFile?.(fid, dirPath)
+              }}
             >
               {isOpen ? (
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -263,7 +291,7 @@ export function FileTree({
                 {countFiles(node)}
               </span>
             </button>
-            {isOpen && renderNodes(node.children, depth + 1)}
+            {isOpen && renderNodes(node.children, depth + 1, `${prefix}${node.name}/`)}
           </div>
         )
       }
@@ -277,6 +305,11 @@ export function FileTree({
           <ContextMenuTrigger asChild>
             <div
               data-file-id={file.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(FILE_ID_TYPE, file.id)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
               className={`group flex items-center rounded-md pr-1 transition-colors ${
                 isActive ? 'bg-clay/10' : 'hover:bg-accent'
               }`}
@@ -357,7 +390,8 @@ export function FileTree({
       className="relative flex h-full flex-col"
       onDragOver={(e) => {
         e.preventDefault()
-        setDragOver(true)
+        // 工作区内部拖拽移动（目录行自行处理）：不触发「导入到工作区」遮罩
+        if (!e.dataTransfer.types.includes(FILE_ID_TYPE)) setDragOver(true)
       }}
       onDragLeave={(e) => {
         // 仅在真正离开容器（而不是移入子元素）时取消高亮
@@ -366,6 +400,8 @@ export function FileTree({
       onDrop={(e) => {
         e.preventDefault()
         setDragOver(false)
+        // 内部移动由目录行处理并 stopPropagation；冒泡到这里（拖到非目录区域）不动作
+        if (e.dataTransfer.getData(FILE_ID_TYPE)) return
         const dropped = Array.from(e.dataTransfer.files)
         if (dropped.length) onImportFiles(dropped)
       }}

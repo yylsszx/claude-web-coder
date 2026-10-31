@@ -730,6 +730,19 @@ export default function WorkspacePage() {
     [refreshFiles, toast]
   )
 
+  /** 文件树拖拽移动：把文件移入目录（拼 newPath 走重命名链路；同路径 no-op） */
+  const moveFile = useCallback(
+    async (fileId: string, dirPath: string): Promise<boolean> => {
+      const f = filesRef.current.find((x) => x.id === fileId)
+      if (!f) return false
+      const basename = f.path.split('/').pop() ?? f.path
+      const newPath = `${dirPath}/${basename}`
+      if (newPath === f.path) return true // 拖回原目录不动作
+      return renameFile(fileId, newPath)
+    },
+    [renameFile]
+  )
+
   const deleteFile = useCallback(
     async (id: string) => {
       try {
@@ -1416,6 +1429,7 @@ export default function WorkspacePage() {
       onCreate={createFile}
       onRename={renameFile}
       onDelete={deleteFile}
+      onMoveFile={moveFile}
       onQuickOpen={() => setQuickOpen(true)}
       onImportFiles={(dropped) => void importDroppedFiles(dropped)}
       importingFiles={importingFiles}
@@ -1495,6 +1509,7 @@ export default function WorkspacePage() {
       onApplyAll={openApplyAll}
       onRegenerate={() => void regenerateLast()}
       onSaveAsCode={openSaveAs}
+      onOpenFile={(id) => void openFile(id)}
       onInsertCode={insertCodeToEditor}
       onExportChat={exportChat}
       onEditResend={(id, content) => void editAndResend(id, content)}
