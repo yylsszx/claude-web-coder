@@ -28,3 +28,6 @@ mini-services/*/
 # 系统文件
 .DS_Store
 *.pem
+
+# 会话临时产物
+tool-results/
