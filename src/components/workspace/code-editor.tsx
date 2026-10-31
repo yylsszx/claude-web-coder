@@ -33,6 +33,7 @@ import {
   Pencil,
   PencilLine,
   Plus,
+  Save,
   Sparkles,
   SquarePen,
   WrapText,
@@ -191,6 +192,10 @@ interface CodeEditorProps {
   onReorderTabs: (fromId: string, toId: string) => void
   onChange: (value: string) => void
   onSave: () => void
+  /** 当前未保存标签总数（含当前标签），> 1 时工具栏显示「全部保存」 */
+  dirtyCount?: number
+  /** 一键保存全部未保存文件（Ctrl/⌘ + Alt + S） */
+  onSaveAll?: () => void
   jumpTarget?: JumpTarget | null
   /** 选中文本后请求 AI 处理 */
   onAskSelection?: (action: SelectionAction, sel: SelectionPayload) => void
@@ -212,6 +217,8 @@ export function CodeEditor({
   onReorderTabs,
   onChange,
   onSave,
+  dirtyCount = 0,
+  onSaveAll,
   jumpTarget,
   onAskSelection,
   askDisabled,
@@ -625,6 +632,18 @@ export function CodeEditor({
         >
           保存
         </Button>
+        {dirtyCount > 1 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 gap-1 px-2.5 text-xs text-clay hover:text-clay"
+            onClick={onSaveAll}
+            title={`保存全部 ${dirtyCount} 个未保存文件（Ctrl/⌘ + Alt + S）`}
+          >
+            <Save className="h-3 w-3" />
+            全部保存（{dirtyCount}）
+          </Button>
+        )}
       </div>
 
       {/* 编辑 / 预览区域 */}

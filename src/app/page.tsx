@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus } from 'lucide-react'
+import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
+import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -58,6 +58,25 @@ export default function WorkspacePage() {
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
   // 移动端 Tab 受控（AI 选区操作时自动切到对话）
   const [mobileTab, setMobileTab] = useState('chat')
+
+  // ===== 面板折叠（专注模式）：折叠左文件树 / 右对话面板，编辑区占满 =====
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
+
+  const toggleLeftPanel = useCallback(() => {
+    const panel = leftPanelRef.current
+    if (!panel) return
+    if (panel.isCollapsed()) panel.expand()
+    else panel.collapse()
+  }, [])
+  const toggleRightPanel = useCallback(() => {
+    const panel = rightPanelRef.current
+    if (!panel) return
+    if (panel.isCollapsed()) panel.expand()
+    else panel.collapse()
+  }, [])
 
   // ===== 应用代码（目标选择 → diff 预览） / 存为新文件 / 拖拽导入 =====
   const [applyTargetOpen, setApplyTargetOpen] = useState(false)
@@ -252,11 +271,22 @@ export default function WorkspacePage() {
     }
   }, [])
 
+  // 挂载后同步一次面板折叠状态：autoSaveId 恢复的布局可能自带折叠尺寸（size=0），
+  // 此时不会触发 onCollapse，需主动校正按钮图标与手柄显隐
+  useEffect(() => {
+    if (isMobile) return
+    const raf = requestAnimationFrame(() => {
+      if ((leftPanelRef.current?.getSize() ?? 1) <= 0.1) setLeftCollapsed(true)
+      if ((rightPanelRef.current?.getSize() ?? 1) <= 0.1) setRightCollapsed(true)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [isMobile])
+
   // ===== 保存 =====
   const saveTab = useCallback(
-    async (tabId: string, contentOverride?: string) => {
+    async (tabId: string, contentOverride?: string): Promise<boolean> => {
       const tab = openTabsRef.current.find((t) => t.id === tabId)
-      if (!tab) return
+      if (!tab) return false
       const content = contentOverride ?? tab.content
       setTabStates((prev) => ({ ...prev, [tabId]: 'saving' }))
       try {
@@ -273,6 +303,7 @@ export default function WorkspacePage() {
           prev.map((t) => (t.id === tabId ? { ...t, content } : t))
         )
         setTabStates((prev) => ({ ...prev, [tabId]: 'saved' }))
+        return true
       } catch (error) {
         setTabStates((prev) => ({ ...prev, [tabId]: 'dirty' }))
         toast({
@@ -280,10 +311,36 @@ export default function WorkspacePage() {
           description: error instanceof Error ? error.message : '请稍后重试',
           variant: 'destructive',
         })
+        return false
       }
     },
     [toast]
   )
+
+  /** 一键保存全部未保存文件（工具栏「全部保存」/ Ctrl/⌘ + Alt + S） */
+  const saveAllDirty = useCallback(async () => {
+    const dirty = openTabsRef.current.filter((t) => tabStates[t.id] === 'dirty')
+    if (!dirty.length) return
+    // 先取消这些标签的待执行自动保存，避免与手动保存竞态
+    dirty.forEach((t) => {
+      if (saveTimersRef.current[t.id]) {
+        clearTimeout(saveTimersRef.current[t.id])
+        delete saveTimersRef.current[t.id]
+      }
+    })
+    const results = await Promise.all(dirty.map((t) => saveTab(t.id)))
+    const ok = results.filter(Boolean).length
+    const fail = results.length - ok
+    if (fail === 0) {
+      toast({ title: `已保存 ${ok} 个文件` })
+    } else {
+      toast({
+        title: `${fail} 个文件保存失败`,
+        description: '详情见对应标签页的错误提示',
+        variant: 'destructive',
+      })
+    }
+  }, [saveTab, tabStates, toast])
 
   const scheduleSave = useCallback(
     (tabId: string, content: string) => {
@@ -296,7 +353,7 @@ export default function WorkspacePage() {
   // Ctrl/⌘ + P 快速打开；Ctrl/⌘ + Shift + F 全局搜索；Ctrl/⌘ + S 保存；Ctrl/⌘ + / 快捷键帮助
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         const tab = activeTabRef.current
         if (!tab) return
@@ -317,6 +374,15 @@ export default function WorkspacePage() {
       } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
         e.preventDefault()
         setShortcutsOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        // Ctrl/⌘ + B 折叠/展开左文件树；Ctrl/⌘ + Alt + B 折叠/展开右对话面板
+        e.preventDefault()
+        if (e.altKey) toggleRightPanel()
+        else toggleLeftPanel()
+      } else if ((e.metaKey || e.ctrlKey) && e.altKey && e.key.toLowerCase() === 's') {
+        // Ctrl/⌘ + Alt + S 保存全部未保存文件
+        e.preventDefault()
+        void saveAllDirty()
       } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         // Ctrl/⌘ + Alt + ←/→ 在打开的标签间循环切换
         e.preventDefault()
@@ -330,7 +396,7 @@ export default function WorkspacePage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveTab])
+  }, [saveTab, saveAllDirty, toggleLeftPanel, toggleRightPanel])
 
   // ===== 文件操作 =====
   const refreshFiles = useCallback(async () => {
@@ -1159,6 +1225,8 @@ export default function WorkspacePage() {
       onAskSelection={askAboutSelection}
       askDisabled={chatLoading}
       registerInsert={registerEditorInsert}
+      dirtyCount={Object.values(tabStates).filter((s) => s === 'dirty').length}
+      onSaveAll={() => void saveAllDirty()}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -1447,6 +1515,36 @@ export default function WorkspacePage() {
             <Moon className="h-4 w-4" />
           )}
         </button>
+        {!isMobile && (
+          <>
+            <button
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={toggleLeftPanel}
+              title={leftCollapsed ? '展开文件树（Ctrl/⌘ + B）' : '折叠文件树（Ctrl/⌘ + B）'}
+              aria-label={leftCollapsed ? '展开文件树' : '折叠文件树'}
+              aria-pressed={leftCollapsed}
+            >
+              {leftCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={toggleRightPanel}
+              title={rightCollapsed ? '展开 AI 对话（Ctrl/⌘ + Alt + B）' : '折叠 AI 对话（Ctrl/⌘ + Alt + B）'}
+              aria-label={rightCollapsed ? '展开 AI 对话面板' : '折叠 AI 对话面板'}
+              aria-pressed={rightCollapsed}
+            >
+              {rightCollapsed ? (
+                <PanelRightOpen className="h-4 w-4" />
+              ) : (
+                <PanelRightClose className="h-4 w-4" />
+              )}
+            </button>
+          </>
+        )}
         <button
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onClick={() => setShortcutsOpen(true)}
@@ -1480,9 +1578,18 @@ export default function WorkspacePage() {
           </TabsContent>
         </Tabs>
       ) : (
-        /* 桌面端：可拖拽三栏 */
+        /* 桌面端：可拖拽三栏（左右面板可折叠，手柄常驻可拖拽恢复，展开恢复原尺寸） */
         <PanelGroup direction="horizontal" className="flex-1" autoSaveId="workspace-panels">
-          <Panel defaultSize={19} minSize={13} className="bg-secondary/40">
+          <Panel
+            ref={leftPanelRef}
+            defaultSize={19}
+            minSize={13}
+            collapsible
+            collapsedSize={0}
+            className="bg-secondary/40"
+            onCollapse={() => setLeftCollapsed(true)}
+            onExpand={() => setLeftCollapsed(false)}
+          >
             {fileTreeView}
           </Panel>
           <PanelResizeHandle className="w-px bg-border transition-colors data-[resize-handle-state=hover]:bg-clay data-[resize-handle-state=drag]:bg-clay" />
@@ -1490,7 +1597,16 @@ export default function WorkspacePage() {
             {editorView}
           </Panel>
           <PanelResizeHandle className="w-px bg-border transition-colors data-[resize-handle-state=hover]:bg-clay data-[resize-handle-state=drag]:bg-clay" />
-          <Panel defaultSize={35} minSize={22} className="bg-secondary/20">
+          <Panel
+            ref={rightPanelRef}
+            defaultSize={35}
+            minSize={22}
+            collapsible
+            collapsedSize={0}
+            className="bg-secondary/20"
+            onCollapse={() => setRightCollapsed(true)}
+            onExpand={() => setRightCollapsed(false)}
+          >
             {chatView}
           </Panel>
         </PanelGroup>

@@ -22,6 +22,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Shift', 'F'], desc: '全局搜索（文件名 + 内容）' },
       { keys: ['Ctrl/⌘', 'F'], desc: '焦点在编辑器：查找替换；焦点在对话面板：会话内搜索消息' },
       { keys: ['Ctrl/⌘', 'S'], desc: '保存当前文件' },
+      { keys: ['Ctrl/⌘', 'Alt', 'S'], desc: '保存全部未保存文件' },
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
     ],
   },
@@ -37,6 +38,8 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
   {
     group: '通用',
     items: [
+      { keys: ['Ctrl/⌘', 'B'], desc: '折叠 / 展开左侧文件树' },
+      { keys: ['Ctrl/⌘', 'Alt', 'B'], desc: '折叠 / 展开右侧对话面板' },
       { keys: ['Ctrl/⌘', '/'], desc: '打开 / 关闭本快捷键帮助' },
       { keys: ['Esc'], desc: '关闭对话框、取消消息编辑' },
     ],
