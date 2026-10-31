@@ -333,6 +333,27 @@ function findTaskLineIdx(content: string, nth: number): number | null {
   return null;
 }
 
+/** 统计 content 中的 GFM 任务项总数与已完成数（与 findTaskLineIdx 同款判定：跳过 ``` / ~~~ 围栏内假任务行，缩进限 0-3 空格排除缩进代码块） */
+function countTasks(content: string): { total: number; done: number } {
+  const lines = content.split("\n");
+  let total = 0;
+  let done = 0;
+  let inFence = false;
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^ {0,3}(?:[-*+]|\d+[.)])\s+\[([ xX])\]/.exec(line);
+    if (m) {
+      total++;
+      if (m[1] !== " ") done++;
+    }
+  }
+  return { total, done };
+}
+
 /** 渲染 AI 回复（Markdown + 代码块） */
 export const AiMessage = memo(function AiMessage({
   content,
@@ -347,6 +368,8 @@ export const AiMessage = memo(function AiMessage({
   onToggleTask,
 }: AiMessageProps) {
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
+  // 任务列表进度：有任务项时在内容底部显示「任务 2/5」+ 迷你进度条（勾选后随 content 实时刷新）
+  const taskStats = useMemo(() => countTasks(content), [content]);
   const [allCopied, setAllCopied] = useState(false);
   // 任务列表渲染序号：components 按文档序被调用，自增得到「第 N 个 checkbox」；
   // remark-rehype 合成的 input 无源 position，靠它与源文任务行配对
@@ -562,6 +585,28 @@ export const AiMessage = memo(function AiMessage({
           </button>
         )}
       </div>
+      {taskStats.total > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
+          <ListChecks className="h-3 w-3 shrink-0 text-clay" />
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            任务 {taskStats.done}/{taskStats.total}
+            {taskStats.done === taskStats.total ? " · 全部完成" : ""}
+          </span>
+          <div
+            className="h-1 w-16 overflow-hidden rounded-full bg-secondary"
+            title={`${taskStats.done} / ${taskStats.total} 已完成`}
+          >
+            <div
+              className={`h-full rounded-full transition-[width] duration-300 ${
+                taskStats.done === taskStats.total ? "bg-green-600" : "bg-clay"
+              }`}
+              style={{
+                width: `${Math.round((taskStats.done / taskStats.total) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
       {showBatchTools && blocks.length >= 2 && (
         <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
           <Layers className="h-3 w-3 shrink-0 text-clay" />

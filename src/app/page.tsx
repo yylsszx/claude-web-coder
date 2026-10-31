@@ -143,14 +143,34 @@ export default function WorkspacePage() {
     if (res.ok) setMessages(data.messages ?? [])
   }, [])
 
+  /** 滚动定位到指定消息并闪烁高亮（全局搜索命中消息跳转用） */
+  const flashMessage = useCallback((messageId: string) => {
+    // 切会话后 loadMessages → setState → 渲染需要一拍，稍候再找 DOM
+    window.setTimeout(() => {
+      const el = document.querySelector(`[data-message-id="${messageId}"]`)
+      if (!el) return
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.classList.remove('message-flash') // 连续点击同一结果时先复位再播
+      // 触发 reflow 确保动画重新播放
+      void (el as HTMLElement).offsetWidth
+      el.classList.add('message-flash')
+      window.setTimeout(() => el.classList.remove('message-flash'), 2000)
+    }, 150)
+  }, [])
+
   const switchSession = useCallback(
-    async (id: string) => {
-      if (activeSessionRef.current === id) return
+    async (id: string, messageId?: string) => {
+      if (activeSessionRef.current === id) {
+        // 已在该会话内：无须切换，仅定位高亮（全局搜索命中当前会话的消息）
+        if (messageId) flashMessage(messageId)
+        return
+      }
       setActiveSessionId(id)
       setStreamingId(null)
       await loadMessages(id)
+      if (messageId) flashMessage(messageId)
     },
-    [loadMessages]
+    [loadMessages, flashMessage]
   )
 
   const createSession = useCallback(async () => {
@@ -1658,7 +1678,7 @@ export default function WorkspacePage() {
         open={searchOpen}
         onOpenChange={setSearchOpen}
         onJump={(fileId, line) => void jumpToLine(fileId, line)}
-        onJumpToSession={(id) => void switchSession(id)}
+        onJumpToSession={(id, mid) => void switchSession(id, mid)}
       />
       {/* 应用目标选择（代码块「应用到文件…」/ 批量「应用全部」） */}
       <ApplyTargetDialog

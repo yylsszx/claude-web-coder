@@ -42,8 +42,8 @@ interface GlobalSearchProps {
   onOpenChange: (open: boolean) => void
   /** 点击命中行：打开文件并跳转到该行 */
   onJump: (fileId: string, line: number) => void
-  /** 点击命中消息：切换到对应会话 */
-  onJumpToSession: (sessionId: string) => void
+  /** 点击命中消息：切换到对应会话并定位高亮该消息 */
+  onJumpToSession: (sessionId: string, messageId?: string) => void
 }
 
 export function GlobalSearch({ open, onOpenChange, onJump, onJumpToSession }: GlobalSearchProps) {
@@ -101,9 +101,9 @@ export function GlobalSearch({ open, onOpenChange, onJump, onJumpToSession }: Gl
     onJump(fileId, line)
   }
 
-  const pickMessage = (sessionId: string) => {
+  const pickMessage = (sessionId: string, messageId: string) => {
     onOpenChange(false)
-    onJumpToSession(sessionId)
+    onJumpToSession(sessionId, messageId)
   }
 
   const trimmed = query.trim()
@@ -201,7 +201,7 @@ export function GlobalSearch({ open, onOpenChange, onJump, onJumpToSession }: Gl
                 <button
                   key={msg.messageId}
                   className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 pl-6 text-left transition-colors hover:bg-accent"
-                  onClick={() => pickMessage(msg.sessionId)}
+                  onClick={() => pickMessage(msg.sessionId, msg.messageId)}
                 >
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-[12px] font-medium">{msg.sessionTitle}</span>

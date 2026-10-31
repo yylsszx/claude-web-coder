@@ -270,3 +270,23 @@
 .markdown-preview .ai-markdown li {
   margin: 0.25em 0;
 }
+
+/* 全局搜索命中消息跳转后的定位闪烁高亮（terracotta 微底色两闪渐隐） */
+@keyframes message-flash {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  20%,
+  60% {
+    background-color: color-mix(in srgb, var(--clay) 14%, transparent);
+  }
+  40%,
+  80% {
+    background-color: transparent;
+  }
+}
+.message-flash {
+  animation: message-flash 1.8s ease-in-out;
+  border-radius: 0.5rem;
+}
