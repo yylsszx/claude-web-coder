@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -187,6 +187,16 @@ export function FileTree({
   const [renaming, setRenaming] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FileMeta | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // 切换标签 / 打开文件时，文件树自动滚动到当前文件（不在可视区才滚，不打扰手动浏览）
+  useEffect(() => {
+    if (!activeId) return
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-file-id="${CSS.escape(activeId)}"]`)
+      el?.scrollIntoView({ block: 'nearest' })
+    }, 120) // 略等文件树渲染完成（刷新后恢复标签时列表可能尚未挂载）
+    return () => clearTimeout(timer)
+  }, [activeId])
   // 拖拽本地文件悬停高亮
   const [dragOver, setDragOver] = useState(false)
 
@@ -266,6 +276,7 @@ export function FileTree({
         <ContextMenu key={file.id}>
           <ContextMenuTrigger asChild>
             <div
+              data-file-id={file.id}
               className={`group flex items-center rounded-md pr-1 transition-colors ${
                 isActive ? 'bg-clay/10' : 'hover:bg-accent'
               }`}

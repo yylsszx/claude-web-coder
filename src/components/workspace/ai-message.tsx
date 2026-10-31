@@ -411,6 +411,18 @@ export const AiMessage = memo(function AiMessage({
                   <del className="text-muted-foreground/70">{children}</del>
                 );
               },
+              /** 引用块：clay 左竖线 + 微底色，与整体主题统一（默认裸 blockquote 太素） */
+              blockquote({ children }) {
+                return (
+                  <blockquote className="my-2 border-l-[3px] border-clay/50 bg-clay/5 py-1 pl-3 pr-2 text-[12.5px] text-foreground/80 [&>p]:my-0.5">
+                    {children}
+                  </blockquote>
+                );
+              },
+              /** 分隔线：弱化边框，避免默认 <hr> 在米白底上过于突兀 */
+              hr() {
+                return <hr className="my-3 border-0 border-t border-border/70" />;
+              },
               /** GFM 任务列表复选框：只读展示 */
               input({ node: _node, ...rest }) {
                 return (

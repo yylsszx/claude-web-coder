@@ -709,6 +709,16 @@ export function ChatPanel({
     return parts
   }
 
+  /** 会话摘要：取最后一条消息首个非空非代码围栏行，剥掉 Markdown 前缀后截断 */
+  const sessionPreview = (raw?: string): string | undefined => {
+    if (!raw) return undefined
+    const line =
+      raw.split('\n').find((l) => l.trim() && !/^```/.test(l.trim())) ?? ''
+    const cleaned = line.replace(/^[\s#>*`\-|\d.]+/, '').trim()
+    if (!cleaned) return undefined
+    return cleaned.length > 60 ? cleaned.slice(0, 60) + '…' : cleaned
+  }
+
   return (
     <div ref={panelRef} className="flex h-full flex-col">
       {/* 头部：会话切换器 */}
@@ -816,32 +826,39 @@ export function ChatPanel({
                         </div>
                       ) : (
                         <button
-                          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px]"
+                          className="min-w-0 flex-1 px-2 py-1.5 text-left text-[13px]"
                           onClick={() => {
                             setSessionMenuOpen(false)
                             onSwitchSession(session.id)
                           }}
                         >
-                          {session.id === activeSessionId ? (
-                            <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
-                          ) : (
-                            <span className="h-3.5 w-3.5 shrink-0" />
-                          )}
-                          <span
-                            className={`truncate ${
-                              session.id === activeSessionId
-                                ? 'font-medium text-clay'
-                                : 'text-foreground/85'
-                            }`}
-                          >
-                            {session.title}
+                          <span className="flex items-center gap-1.5">
+                            {session.id === activeSessionId ? (
+                              <Check className="h-3.5 w-3.5 shrink-0 text-clay" />
+                            ) : (
+                              <span className="h-3.5 w-3.5 shrink-0" />
+                            )}
+                            <span
+                              className={`truncate ${
+                                session.id === activeSessionId
+                                  ? 'font-medium text-clay'
+                                  : 'text-foreground/85'
+                              }`}
+                            >
+                              {session.title}
+                            </span>
+                            {session.pinned && (
+                              <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
+                            )}
+                            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                              {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
+                            </span>
                           </span>
-                          {session.pinned && (
-                            <Pin className="h-3 w-3 shrink-0 fill-current text-clay" />
+                          {mounted && sessionPreview(session.lastMessage) && (
+                            <span className="mt-0.5 block truncate pl-5 text-[11px] leading-tight text-muted-foreground/70">
+                              {sessionPreview(session.lastMessage)}
+                            </span>
                           )}
-                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                            {mounted ? `${formatRelativeTime(session.updatedAt)} · ${session.messageCount} 条` : ''}
-                          </span>
                         </button>
                       )}
                       <div className="flex shrink-0 items-center">

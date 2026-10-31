@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-/** GET /api/sessions —— 会话列表（按最近更新排序，含消息数） */
+/** GET /api/sessions —— 会话列表（按最近更新排序，含消息数与最后一条消息摘要） */
 export async function GET() {
   try {
     const sessions = await db.chatSession.findMany({
       orderBy: { updatedAt: 'desc' },
-      include: { _count: { select: { messages: true } } },
+      include: {
+        _count: { select: { messages: true } },
+        messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { content: true } },
+      },
     })
     return NextResponse.json({
       sessions: sessions.map((s) => ({
@@ -15,6 +18,7 @@ export async function GET() {
         pinned: s.pinned,
         messageCount: s._count.messages,
         updatedAt: s.updatedAt,
+        lastMessage: s.messages[0]?.content ?? undefined,
       })),
     })
   } catch (error) {

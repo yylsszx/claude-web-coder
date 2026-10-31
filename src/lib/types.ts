@@ -26,4 +26,6 @@ export interface SessionMeta {
   pinned?: boolean
   messageCount: number
   updatedAt: string
+  /** 最后一条消息的内容（供会话下拉展示摘要，API 已剥到前端自行截取首行） */
+  lastMessage?: string
 }
