@@ -190,6 +190,16 @@ export function ChatPanel({
     setFileAttached(true)
   }
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
+  // 打开会话下拉时自动把当前会话滚进可视区（会话多时当前项可能藏在滚动区外）
+  useEffect(() => {
+    if (!sessionMenuOpen || !activeSessionId) return
+    const t = window.setTimeout(() => {
+      document
+        .querySelector(`[data-session-row="${CSS.escape(activeSessionId)}"]`)
+        ?.scrollIntoView({ block: 'nearest' })
+    }, 60) // 略等下拉内容渲染完成
+    return () => window.clearTimeout(t)
+  }, [sessionMenuOpen, activeSessionId])
   // 会话列表搜索过滤
   const [sessionFilter, setSessionFilter] = useState('')
   // 会话下拉行内重命名：点「重命名」铅笔后标题变输入框（Enter 保存 / Esc 或失焦取消），不再弹窗
@@ -837,6 +847,7 @@ export function ChatPanel({
                       <div className="mx-2 my-1 border-t border-border/60" />
                     )}
                     <div
+                      data-session-row={session.id}
                       className={`group/session flex items-center rounded-md pr-0.5 transition-colors ${
                         session.id === activeSessionId ? 'bg-clay/10' : 'hover:bg-accent'
                       }`}

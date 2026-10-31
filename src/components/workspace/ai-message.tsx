@@ -16,6 +16,8 @@ import {
   ChevronUp,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   FileInput,
   FilePlus2,
   Layers,
@@ -39,6 +41,9 @@ interface CodeBlockProps {
 
 /** 超过此行数的代码块默认折叠 */
 const COLLAPSE_LINES = 28;
+
+/** 可实时预览的语言：完整 HTML 文档与 SVG（sandbox iframe 内 srcDoc 渲染，脚本隔离运行） */
+const PREVIEWABLE_LANGS = new Set(["html", "svg"]);
 
 /** 语言标注 → 下载文件扩展名（覆盖 AI 常见写法，如 python/py、c++/cpp） */
 const LANG_EXT: Record<string, string> = {
@@ -155,6 +160,15 @@ function CodeBlock({
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // 实时预览（仅 html / svg 代码块）：sandbox iframe 内渲染，脚本可跑但与页面完全隔离
+  const previewable = PREVIEWABLE_LANGS.has(language.toLowerCase());
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // 预览内容防抖：流式生成时代码逐字增长，直接同步会每 chunk 重载一次 iframe 闪烁
+  const [previewCode, setPreviewCode] = useState(code);
+  useEffect(() => {
+    const t = setTimeout(() => setPreviewCode(code), 400);
+    return () => clearTimeout(t);
+  }, [code]);
   // 主题语法高亮仅在客户端挂载后跟随 resolvedTheme，避免 SSR 与深色客户端 inline style hydration mismatch
   const mounted = useMounted();
   const { resolvedTheme } = useTheme();
@@ -244,6 +258,19 @@ function CodeBlock({
           >
             <Download className="h-3 w-3" />
           </Button>
+          {previewable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-6 w-6 px-0 ${previewOpen ? "text-clay" : "text-muted-foreground"}`}
+              onClick={() => setPreviewOpen((v) => !v)}
+              aria-label={previewOpen ? "关闭预览" : "预览渲染效果"}
+              aria-pressed={previewOpen}
+              title={previewOpen ? "关闭预览" : "预览渲染效果（沙箱内运行，脚本与页面隔离）"}
+            >
+              {previewOpen ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            </Button>
+          )}
         </div>
       </div>
       <SyntaxHighlighter
@@ -285,6 +312,14 @@ function CodeBlock({
             </>
           )}
         </button>
+      )}
+      {previewOpen && (
+        <iframe
+          title="代码块预览"
+          sandbox="allow-scripts allow-forms allow-modals allow-popups"
+          srcDoc={previewCode}
+          className="h-56 w-full border-0 border-t border-border bg-white"
+        />
       )}
     </div>
   );

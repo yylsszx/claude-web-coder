@@ -749,6 +749,25 @@ export function CodeEditor({
     return [...langExts, ...base]
   }, [language, wrapText])
 
+  // 标签显示名：basename 重复时（如两个目录下各有 index.md）带上父目录段区分，无冲突保持纯文件名
+  const tabLabels = useMemo(() => {
+    const baseOf = (p: string) => p.split('/').pop() || p
+    const counts = new Map<string, number>()
+    tabs.forEach((t) => counts.set(baseOf(t.path), (counts.get(baseOf(t.path)) ?? 0) + 1))
+    const labels = new Map<string, string>()
+    tabs.forEach((t) => {
+      const base = baseOf(t.path)
+      if ((counts.get(base) ?? 0) > 1) {
+        const segs = t.path.split('/')
+        const parent = segs[segs.length - 2]
+        labels.set(t.id, parent ? `${parent}/${base}` : base)
+      } else {
+        labels.set(t.id, base)
+      }
+    })
+    return labels
+  }, [tabs])
+
   if (!file) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
@@ -889,7 +908,7 @@ export function CodeEditor({
                       onClick={() => onSwitchTab(tab.id)}
                       title={tab.path}
                     >
-                      {tab.path.split('/').pop()}
+                      {tabLabels.get(tab.id) ?? tab.path.split('/').pop()}
                     </button>
                     {isDirty && (
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay" title="未保存" />
