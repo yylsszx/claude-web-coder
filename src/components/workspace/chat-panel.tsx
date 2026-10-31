@@ -6,6 +6,7 @@ import {
   AtSign,
   Check,
   Copy,
+  CopyPlus,
   Download,
   Eraser,
   FileCode2,
@@ -66,6 +67,8 @@ interface ChatPanelProps {
   onDeleteSession: (id: string) => void
   /** 切换会话置顶 */
   onTogglePin: (id: string, pinned: boolean) => void
+  /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
+  onDuplicateSession: (id: string) => void
   /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件 */
   onSend: (message: string, includeFile: boolean, mentionIds?: string[]) => void
   onStop: () => void
@@ -151,6 +154,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onTogglePin,
+  onDuplicateSession,
   onSend,
   onStop,
   onClear,
@@ -929,6 +933,14 @@ export function ChatPanel({
                             }}
                           >
                             <Pencil className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"
+                            title="克隆会话（复制全部消息为新会话）"
+                            disabled={loading}
+                            onClick={() => onDuplicateSession(session.id)}
+                          >
+                            <CopyPlus className="h-3 w-3 text-muted-foreground" />
                           </button>
                           <button
                             className="flex h-6 w-6 items-center justify-center rounded hover:bg-background"

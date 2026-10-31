@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
   FileCode,
   FileText,
   FileJson,
@@ -16,6 +17,8 @@ import {
   Search,
   Trash2,
 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { copyTextToClipboard } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -180,6 +183,7 @@ export function FileTree({
   onImportFiles,
   importingFiles,
 }: FileTreeProps) {
+  const { toast } = useToast()
   // 目录展开状态：localStorage 外部存储，刷新后保持；SSR 渲染空快照避免 hydration 不一致
   const expanded = useSyncExternalStore(subscribeExpanded, readExpanded, () => EMPTY_FOLDERS)
   const [createOpen, setCreateOpen] = useState(false)
@@ -208,6 +212,16 @@ export function FileTree({
   const FILE_ID_TYPE = 'application/cw-file-id'
 
   const tree = useMemo(() => buildTree(files), [files])
+
+  /** 复制路径到剪贴板（文件路径 / 目录前缀通用，toast 反馈避免无感知） */
+  const handleCopyPath = async (path: string) => {
+    const ok = await copyTextToClipboard(path)
+    toast({
+      title: ok ? '路径已复制' : '复制失败',
+      description: ok ? path : undefined,
+      variant: ok ? undefined : 'destructive',
+    })
+  }
 
   const toggleFolder = (path: string) => {
     const next = new Set(expanded)
@@ -303,6 +317,9 @@ export function FileTree({
                 >
                   <FilePlus2 className="h-3.5 w-3.5" /> 在此目录新建文件
                 </ContextMenuItem>
+                <ContextMenuItem onSelect={() => void handleCopyPath(dirPath)}>
+                  <Copy className="h-3.5 w-3.5" /> 复制目录路径
+                </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
             {isOpen && renderNodes(node.children, depth + 1, `${prefix}${node.name}/`)}
@@ -362,6 +379,11 @@ export function FileTree({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem
+                onClick={() => void handleCopyPath(file.path)}
+              >
+                <Copy className="h-3.5 w-3.5" /> 复制路径
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onClick={() => {
                   setRenameTarget(file)
                   setRenamePath(file.path)
@@ -380,6 +402,9 @@ export function FileTree({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-40">
+          <ContextMenuItem onSelect={() => void handleCopyPath(file.path)}>
+            <Copy className="h-3.5 w-3.5" /> 复制路径
+          </ContextMenuItem>
           <ContextMenuItem
             onSelect={() => {
               setRenameTarget(file)

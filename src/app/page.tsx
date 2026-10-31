@@ -199,6 +199,30 @@ export default function WorkspacePage() {
     }
   }, [refreshSessions, toast])
 
+  /** 克隆会话：复制标题与全部消息为新会话，并切换到副本（副本可独立继续对话，源会话不受影响） */
+  const duplicateSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${id}/clone`, { method: 'POST' })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '克隆失败')
+        await refreshSessions()
+        // 切到副本并加载其消息：克隆完通常就想在副本上继续（改标题 / 删掉不要的消息）
+        setActiveSessionId(data.session.id)
+        setStreamingId(null)
+        await loadMessages(data.session.id)
+        toast({ title: '会话已克隆', description: `「${data.session.title}」，${data.session.messageCount} 条消息` })
+      } catch (error) {
+        toast({
+          title: '克隆会话失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [refreshSessions, loadMessages, toast]
+  )
+
   const renameSession = useCallback(
     async (id: string, title: string): Promise<boolean> => {
       try {
@@ -1515,6 +1539,7 @@ export default function WorkspacePage() {
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
       onTogglePin={toggleSessionPinned}
+      onDuplicateSession={(id) => void duplicateSession(id)}
       onSend={sendMessage}
       onStop={stopGeneration}
       onClear={clearChat}

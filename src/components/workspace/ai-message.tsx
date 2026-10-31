@@ -20,6 +20,7 @@ import {
   FilePlus2,
   Layers,
   ListChecks,
+  ListTree,
   SquarePen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -377,6 +378,23 @@ function countTasks(content: string): { total: number; done: number } {
   return { total, done };
 }
 
+/** 解析 content 的 ATX 标题（# ~ ####；跳过 ``` / ~~~ 围栏内假标题，缩进限 0-3 空格），供长回复目录使用 */
+function parseHeadings(content: string): { level: number; text: string }[] {
+  const lines = content.split("\n");
+  const out: { level: number; text: string }[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^ {0,3}(#{1,4})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (m) out.push({ level: m[1].length, text: m[2] });
+  }
+  return out;
+}
+
 /** 渲染 AI 回复（Markdown + 代码块） */
 export const AiMessage = memo(function AiMessage({
   content,
@@ -395,10 +413,15 @@ export const AiMessage = memo(function AiMessage({
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
   // 任务列表进度：有任务项时在内容底部显示「任务 2/5」+ 迷你进度条（勾选后随 content 实时刷新）
   const taskStats = useMemo(() => countTasks(content), [content]);
+  // 标题目录：≥3 个标题的长回复在底部提供可展开目录，点击滚动到对应标题
+  const headings = useMemo(() => parseHeadings(content), [content]);
+  const [tocOpen, setTocOpen] = useState(false);
   const [allCopied, setAllCopied] = useState(false);
   // 任务列表渲染序号：components 按文档序被调用，自增得到「第 N 个 checkbox」；
   // remark-rehype 合成的 input 无源 position，靠它与源文任务行配对
   let taskSeq = 0;
+  // 标题渲染序号：同上按文档序自增，打在 data-heading-idx 上供目录点击定位（与 parseHeadings 的文档序一致）
+  let headingSeq = 0;
   
   // ===== 长消息折叠 / 展开 =====
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -415,6 +438,17 @@ export const AiMessage = memo(function AiMessage({
   }, [content]);
 
   const collapsed = overflowing && !expanded && !streaming;
+
+  /** 目录点击：滚动到对应标题（折叠中先展开全文再滚，等一拍让内容先撑开） */
+  const scrollToHeading = (idx: number) => {
+    const el = bodyRef.current?.querySelector(`[data-heading-idx="${idx}"]`);
+    if (!el) return;
+    if (collapsed) setExpanded(true);
+    window.setTimeout(
+      () => el.scrollIntoView({ block: "start", behavior: "smooth" }),
+      collapsed ? 80 : 0,
+    );
+  };
 
   /** 以 Markdown 格式复制全部代码块（保留语言围栏，便于粘贴回对话或文档） */
   const handleCopyAll = async () => {
@@ -439,6 +473,19 @@ export const AiMessage = memo(function AiMessage({
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              /** 标题打 data-heading-idx（渲染序号 = 源文标题序，parseHeadings 同序）：供目录点击定位；保留原标签名以继承 .ai-markdown 标题样式 */
+              h1({ children }) {
+                return <h1 data-heading-idx={headingSeq++}>{children}</h1>;
+              },
+              h2({ children }) {
+                return <h2 data-heading-idx={headingSeq++}>{children}</h2>;
+              },
+              h3({ children }) {
+                return <h3 data-heading-idx={headingSeq++}>{children}</h3>;
+              },
+              h4({ children }) {
+                return <h4 data-heading-idx={headingSeq++}>{children}</h4>;
+              },
               /** GFM 表格：横向滚动容器 + Claude 风样式（对齐样式由 remark-gfm 透传到单元格） */
               table({ children }) {
                 return (
@@ -627,6 +674,37 @@ export const AiMessage = memo(function AiMessage({
           </button>
         )}
       </div>
+      {/* 标题目录：≥3 个标题的长回复提供快速跳转（代码围栏内的假标题不计数） */}
+      {headings.length >= 3 && (
+        <div className="mt-2 border-t border-border/50 pt-1.5">
+          <button
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-clay"
+            onClick={() => setTocOpen((v) => !v)}
+            title="快速跳转到回复内各标题"
+          >
+            <ListTree className="h-3 w-3 shrink-0 text-clay" />
+            <span className="shrink-0">目录 · {headings.length} 节</span>
+            {tocOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+          {tocOpen && (
+            <ul className="thin-scrollbar mt-1 max-h-40 space-y-0.5 overflow-y-auto">
+              {headings.map((h, i) => (
+                <li key={i}>
+                  <button
+                    className={`block w-full truncate rounded px-1.5 py-0.5 text-left text-[11.5px] text-foreground/75 transition-colors hover:bg-clay/10 hover:text-clay ${
+                      h.level > 2 ? "pl-4" : ""
+                    }`}
+                    onClick={() => scrollToHeading(i)}
+                    title={h.text}
+                  >
+                    {h.level === 1 ? `# ${h.text}` : h.text}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {taskStats.total > 0 && (
         <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
           <ListChecks className="h-3 w-3 shrink-0 text-clay" />
