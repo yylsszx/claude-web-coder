@@ -27,6 +27,7 @@ import type { Extension } from '@codemirror/state'
 import {
   Bold,
   BookOpen,
+  Braces,
   Check,
   CloudUpload,
   Code,
@@ -52,6 +53,7 @@ import {
   X,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { copyTextToClipboard } from '@/lib/utils'
 import {
@@ -354,6 +356,7 @@ export function CodeEditor({
   onOpenGoto,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
+  const { toast } = useToast()
   const editorViewRef = useRef<EditorView | null>(null)
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -560,6 +563,38 @@ export function CodeEditor({
       /* 视图已销毁时忽略 */
     }
   }, [])
+
+  /** JSON 格式化（仅 json 文件展示按钮）：parse 失败 toast 报错；成功整文替换走撤销栈（Ctrl+Z 可还原） */
+  const handleFormatJson = useCallback(() => {
+    const view = editorViewRef.current
+    if (!view) return
+    const raw = view.state.doc.toString()
+    if (!raw.trim()) return
+    let data: unknown
+    try {
+      data = JSON.parse(raw)
+    } catch (err) {
+      toast({
+        title: 'JSON 解析失败',
+        description: err instanceof Error ? err.message : String(err),
+        variant: 'destructive',
+      })
+      return
+    }
+    const formatted = JSON.stringify(data, null, 2) + '\n'
+    if (formatted === raw) {
+      toast({ title: '已是格式化状态，无需调整' })
+      return
+    }
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: formatted },
+    })
+    view.focus()
+    toast({
+      title: '已格式化 JSON',
+      description: `${raw.length.toLocaleString()} → ${formatted.length.toLocaleString()} 字符（Ctrl/⌘ + Z 可还原）`,
+    })
+  }, [toast])
 
   const askSelection = useCallback(
     (action: SelectionAction) => {
@@ -1001,6 +1036,18 @@ export function CodeEditor({
         >
           <Download className="h-3 w-3" />
         </button>
+        {/* JSON 格式化（仅 json 文件显示）：2 空格缩进整文重排，走撤销栈可还原 */}
+        {file.language === 'json' && (
+          <button
+            type="button"
+            onClick={handleFormatJson}
+            title="格式化 JSON（2 空格缩进，Ctrl/⌘ + Z 可还原）"
+            aria-label="格式化 JSON"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+          >
+            <Braces className="h-3 w-3" />
+          </button>
+        )}
         {/* 显示偏好：字号调节 + 自动换行开关 */}
         <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
           <button

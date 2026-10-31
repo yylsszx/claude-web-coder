@@ -290,3 +290,10 @@
   animation: message-flash 1.8s ease-in-out;
   border-radius: 0.5rem;
 }
+
+/* AI 代码块「自动换行」态：react-syntax-highlighter 的 wrapLongLines 会被主题默认
+   codeTagProps 的 white-space:pre 覆盖（库内合并顺序问题），改用容器类强制折行 */
+.code-block-wrap code {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+}

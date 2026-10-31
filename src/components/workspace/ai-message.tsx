@@ -24,6 +24,7 @@ import {
   ListChecks,
   ListTree,
   SquarePen,
+  WrapText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { copyTextToClipboard } from "@/lib/utils";
@@ -160,6 +161,9 @@ function CodeBlock({
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // 自动换行：默认关闭（横向滚动）；长 URL / minified 代码可一键折行显示，
+  // 折行用容器类 .code-block-wrap 强制（库的 wrapLongLines 会被主题默认样式覆盖），开启时隐藏行号避免错位
+  const [wrap, setWrap] = useState(false);
   // 实时预览（仅 html / svg 代码块）：sandbox iframe 内渲染，脚本可跑但与页面完全隔离
   const previewable = PREVIEWABLE_LANGS.has(language.toLowerCase());
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -187,7 +191,9 @@ function CodeBlock({
   };
 
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-border">
+    <div
+      className={`my-2 overflow-hidden rounded-lg border border-border ${wrap ? "code-block-wrap" : ""}`}
+    >
       <div className="flex items-center gap-2 border-b border-border bg-secondary/60 px-3 py-1.5">
         <span className="font-mono text-[11px] text-muted-foreground">
           {language || "code"}
@@ -258,6 +264,17 @@ function CodeBlock({
           >
             <Download className="h-3 w-3" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 w-6 px-0 ${wrap ? "text-clay" : "text-muted-foreground"}`}
+            onClick={() => setWrap((v) => !v)}
+            aria-label="切换自动换行"
+            aria-pressed={wrap}
+            title={wrap ? "关闭自动换行（长行横向滚动）" : "自动换行（长行折叠显示，隐藏行号）"}
+          >
+            <WrapText className="h-3 w-3" />
+          </Button>
           {previewable && (
             <Button
               variant="ghost"
@@ -276,7 +293,7 @@ function CodeBlock({
       <SyntaxHighlighter
         language={language || "text"}
         style={isDark ? oneDark : oneLight}
-        showLineNumbers
+        showLineNumbers={!wrap}
         lineNumberStyle={{
           color: isDark ? "#6b6a66" : "#c8c6c0",
           minWidth: "2.4em",
@@ -289,7 +306,6 @@ function CodeBlock({
           fontSize: "12.5px",
           background: isDark ? "#282826" : "#ffffff",
         }}
-        wrapLongLines={false}
       >
         {shownCode}
       </SyntaxHighlighter>
@@ -451,6 +467,9 @@ export const AiMessage = memo(function AiMessage({
   // 标题目录：≥3 个标题的长回复在底部提供可展开目录，点击滚动到对应标题
   const headings = useMemo(() => parseHeadings(content), [content]);
   const [tocOpen, setTocOpen] = useState(false);
+  // 目录高亮：当前滚动位置对应的标题序号，目录展开时跟随滚动实时刷新
+  const [activeHeading, setActiveHeading] = useState(-1);
+  const tocListRef = useRef<HTMLUListElement | null>(null);
   const [allCopied, setAllCopied] = useState(false);
   // 任务列表渲染序号：components 按文档序被调用，自增得到「第 N 个 checkbox」；
   // remark-rehype 合成的 input 无源 position，靠它与源文任务行配对
@@ -478,12 +497,71 @@ export const AiMessage = memo(function AiMessage({
   const scrollToHeading = (idx: number) => {
     const el = bodyRef.current?.querySelector(`[data-heading-idx="${idx}"]`);
     if (!el) return;
+    setActiveHeading(idx);
     if (collapsed) setExpanded(true);
     window.setTimeout(
       () => el.scrollIntoView({ block: "start", behavior: "smooth" }),
       collapsed ? 80 : 0,
     );
   };
+
+  /** 沿 DOM 向上找第一个滚动祖先（消息在聊天面板滚动容器内滚动，window 兒底） */
+  const getScrollParent = (el: HTMLElement | null): HTMLElement | null => {
+    let node = el?.parentElement ?? null;
+    while (node) {
+      const oy = getComputedStyle(node).overflowY;
+      if (oy === "auto" || oy === "scroll") return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  // 目录展开时监听滚动祖先：把「容器顶部线（容器顶 + 96px）以上最靠下的标题」记为当前节；
+  // 流式 / 展开 / 折叠状态变化也重算一次。rAF 节流，卸载与依赖变化时清理
+  useEffect(() => {
+    if (!tocOpen || collapsed) return;
+    const body = bodyRef.current;
+    if (!body) return;
+    const sp = getScrollParent(body);
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const heads = Array.from(
+        body.querySelectorAll<HTMLElement>("[data-heading-idx]"),
+      );
+      if (heads.length === 0) return;
+      const topLimit = (sp?.getBoundingClientRect().top ?? 0) + 96;
+      let cur = 0;
+      for (let i = 0; i < heads.length; i++) {
+        if (heads[i].getBoundingClientRect().top <= topLimit) cur = i;
+        else break;
+      }
+      setActiveHeading((prev) => (prev === cur ? prev : cur));
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    sp?.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      sp?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [tocOpen, collapsed, expanded, content, streaming]);
+
+  // 高亮目录项保持在目录列表可视区内（手动调 scrollTop，避免 scrollIntoView 波及外层滚动）
+  useEffect(() => {
+    const list = tocListRef.current;
+    if (!list || activeHeading < 0) return;
+    const item = list.children[activeHeading] as HTMLElement | undefined;
+    if (!item) return;
+    const lr = list.getBoundingClientRect();
+    const ir = item.getBoundingClientRect();
+    if (ir.top < lr.top + 2) list.scrollTop += ir.top - lr.top;
+    else if (ir.bottom > lr.bottom - 2) list.scrollTop += ir.bottom - lr.bottom;
+  }, [activeHeading, tocOpen]);
 
   /** 以 Markdown 格式复制全部代码块（保留语言围栏，便于粘贴回对话或文档） */
   const handleCopyAll = async () => {
@@ -722,14 +800,20 @@ export const AiMessage = memo(function AiMessage({
             {tocOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </button>
           {tocOpen && (
-            <ul className="thin-scrollbar mt-1 max-h-40 space-y-0.5 overflow-y-auto">
+            <ul
+              ref={tocListRef}
+              className="thin-scrollbar mt-1 max-h-40 space-y-0.5 overflow-y-auto"
+            >
               {headings.map((h, i) => (
                 <li key={i}>
                   <button
-                    className={`block w-full truncate rounded px-1.5 py-0.5 text-left text-[11.5px] text-foreground/75 transition-colors hover:bg-clay/10 hover:text-clay ${
-                      h.level > 2 ? "pl-4" : ""
-                    }`}
+                    className={`block w-full truncate rounded px-1.5 py-0.5 text-left text-[11.5px] transition-colors hover:bg-clay/10 hover:text-clay ${
+                      i === activeHeading
+                        ? "bg-clay/10 font-medium text-clay"
+                        : "text-foreground/75"
+                    } ${h.level > 2 ? "pl-4" : ""}`}
                     onClick={() => scrollToHeading(i)}
+                    aria-current={i === activeHeading ? "location" : undefined}
                     title={h.text}
                   >
                     {h.level === 1 ? `# ${h.text}` : h.text}
