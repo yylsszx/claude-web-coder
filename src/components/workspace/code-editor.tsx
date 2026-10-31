@@ -1148,6 +1148,8 @@ export function CodeEditor({
           <span className="whitespace-nowrap px-0.5 text-[10.5px] text-muted-foreground">
             L{selState.fromLine}
             {selState.toLine !== selState.fromLine ? `-${selState.toLine}` : ''}
+            {selState.text.length > 0 &&
+              ` · ${selState.text.length.toLocaleString()} 字符`}
           </span>
           <button
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent"

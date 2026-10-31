@@ -83,6 +83,8 @@ interface ChatPanelProps {
   onExportChat: () => void
   /** 编辑历史用户消息并重发（服务端丢弃其后所有消息） */
   onEditResend: (messageId: string, newContent: string) => void
+  /** 勾选 AI 回复任务列表项：乐观更新 + 持久化（失败由上层回滚并提示） */
+  onToggleTaskContent?: (msgId: string, content: string, prevContent: string) => void
 }
 
 const QUICK_ACTIONS = [
@@ -156,6 +158,7 @@ export function ChatPanel({
   onInsertCode,
   onApplyAll,
   onExportChat,
+  onToggleTaskContent,
   onEditResend,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
@@ -278,6 +281,8 @@ export function ChatPanel({
     // 同步恢复该会话的输入历史，退出回溯浏览态
     inputHistoryRef.current = readInputHistory(activeSessionId)
     histIndexRef.current = null
+    // 切换会话后输入框自动聚焦，直接开始输入
+    requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
   // 首次挂载恢复当前会话草稿：ChatPanel 在数据就绪后才挂载（initialLoading 期间不渲染），
@@ -1110,6 +1115,11 @@ export function ChatPanel({
                       onApplyAll={isStreaming(msg.id) ? undefined : onApplyAll}
                       showBatchTools={!isStreaming(msg.id)}
                       streaming={isStreaming(msg.id)}
+                      onToggleTask={
+                        isStreaming(msg.id) || !onToggleTaskContent
+                          ? undefined
+                          : (newContent) => onToggleTaskContent(msg.id, newContent, msg.content)
+                      }
                     />
                     {isStreaming(msg.id) && elapsedSec !== null && (
                       <div

@@ -305,12 +305,33 @@ interface AiMessageProps {
   showBatchTools?: boolean;
   /** 该消息是否正在流式生成（生成中不折叠，结束后按实际高度折叠） */
   streaming?: boolean;
+  /** 勾选 / 取消任务列表项：传入后 checkbox 可交互（回调得到替换后的完整 Markdown）；流式生成中不传 → 只读 */
+  onToggleTask?: (newContent: string) => void;
 }
 
 /** 折叠阈值：内容超过此高度显示「展开全文」（px） */
 const COLLAPSE_HEIGHT = 420;
 /** 迟滞量：避免临界高度抖动（px） */
 const COLLAPSE_HYSTERESIS = 48;
+
+/** 找 content 中第 nth 个任务项的行号（跳过 ``` / ~~~ 围栏代码块内的假任务行；缩进限 0-3 空格排除缩进代码块） */
+function findTaskLineIdx(content: string, nth: number): number | null {
+  const lines = content.split("\n");
+  let count = 0;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*(```|~~~)/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (/^ {0,3}(?:[-*+]|\d+[.)])\s+\[[ xX]\]/.test(lines[i])) {
+      if (count === nth) return i;
+      count++;
+    }
+  }
+  return null;
+}
 
 /** 渲染 AI 回复（Markdown + 代码块） */
 export const AiMessage = memo(function AiMessage({
@@ -323,10 +344,14 @@ export const AiMessage = memo(function AiMessage({
   onApplyAll,
   showBatchTools,
   streaming = false,
+  onToggleTask,
 }: AiMessageProps) {
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
   const [allCopied, setAllCopied] = useState(false);
-
+  // 任务列表渲染序号：components 按文档序被调用，自增得到「第 N 个 checkbox」；
+  // remark-rehype 合成的 input 无源 position，靠它与源文任务行配对
+  let taskSeq = 0;
+  
   // ===== 长消息折叠 / 展开 =====
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -423,14 +448,35 @@ export const AiMessage = memo(function AiMessage({
               hr() {
                 return <hr className="my-3 border-0 border-t border-border/70" />;
               },
-              /** GFM 任务列表复选框：只读展示 */
+              /** GFM 任务列表复选框：可勾选时按渲染序号定位源文行互换 [ ] ↔ [x] 并回调持久化；无回调（流式中）只读 */
               input({ node: _node, ...rest }) {
+                const myIndex = taskSeq++;
+                const canToggle = !!onToggleTask;
                 return (
                   <input
                     {...rest}
-                    disabled
-                    readOnly
+                    checked={Boolean(rest.checked)}
+                    disabled={!canToggle}
+                    title={canToggle ? '勾选 / 取消待办' : undefined}
                     className="mr-1.5 h-3.5 w-3.5 translate-y-0.5 accent-clay"
+                    onChange={() => {
+                      if (!onToggleTask) return;
+                      const lines = content.split("\n");
+                      const idx = findTaskLineIdx(content, myIndex);
+                      if (idx === null) return;
+                      const toggled = lines[idx].replace(
+                        /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/,
+                        (
+                          _m: string,
+                          head: string,
+                          mark: string,
+                          tail: string,
+                        ) => head + (mark === ' ' ? 'x' : ' ') + tail,
+                      );
+                      if (toggled === lines[idx]) return;
+                      lines[idx] = toggled;
+                      onToggleTask(lines.join("\n"));
+                    }}
                   />
                 );
               },

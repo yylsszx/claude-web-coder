@@ -916,6 +916,33 @@ export default function WorkspacePage() {
     await runStream({ message: lastUser.content, regenerate: true })
   }, [runStream])
 
+  /** 勾选 / 取消 AI 回复任务列表项：乐观更新 content 并 PATCH 持久化，失败回滚并提示 */
+  const toggleTaskContent = useCallback(
+    async (msgId: string, content: string, prevContent: string) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === msgId ? { ...m, content } : m)),
+      )
+      try {
+        const res = await fetch(`/api/messages/${msgId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error ?? '保存失败')
+      } catch (error) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msgId ? { ...m, content: prevContent } : m)),
+        )
+        toast({
+          title: '待办勾选保存失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [toast]
+  )
+
   /** 编辑历史用户消息并重发：服务端更新该消息并丢弃其后所有消息，重新流式生成 */
   const editAndResend = useCallback(
     async (messageId: string, newContent: string) => {
@@ -1373,6 +1400,7 @@ export default function WorkspacePage() {
       onInsertCode={insertCodeToEditor}
       onExportChat={exportChat}
       onEditResend={(id, content) => void editAndResend(id, content)}
+      onToggleTaskContent={(id, content, prev) => void toggleTaskContent(id, content, prev)}
     />
   )
 
