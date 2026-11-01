@@ -10,6 +10,7 @@ import {
   ChevronRight,
   FileDiff,
   FileCode2,
+  GitCompareArrows,
 } from 'lucide-react'
 import {
   Dialog,
@@ -114,8 +115,10 @@ export function VersionHistoryDialog({
   const [versions, setVersions] = useState<VersionMeta[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  /** 展开条目的视图：内容预览 / 与当前对比 */
-  const [viewMode, setViewMode] = useState<'preview' | 'diff'>('preview')
+  /** 展开条目的视图：内容预览 / 与当前对比 / 与上一版对比（相邻快照 diff，看清单步变化） */
+  const [viewMode, setViewMode] = useState<'preview' | 'diff-current' | 'diff-prev'>(
+    'preview'
+  )
   /** 已拉取内容的版本缓存（id → content） */
   const contentCacheRef = useRef(new Map<string, string>())
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -153,7 +156,7 @@ export function VersionHistoryDialog({
     }
   }, [open, fileId])
 
-  /** 展开 / 收起一个版本：首次展开拉取内容并缓存 */
+  /** 展开 / 收起一个版本：首次展开拉取内容并缓存，顺带预取更早一版（供「与上一版对比」直接可用） */
   const toggleExpand = async (v: VersionMeta) => {
     if (expandedId === v.id) {
       setExpandedId(null)
@@ -161,12 +164,25 @@ export function VersionHistoryDialog({
     }
     setExpandedId(v.id)
     setViewMode('preview')
-    if (contentCacheRef.current.has(v.id)) return
     setPreviewLoading(true)
     try {
-      const res = await fetch(`/api/files/${fileId}/versions?versionId=${v.id}`)
-      const data = await res.json()
-      if (res.ok) contentCacheRef.current.set(v.id, data.version?.content ?? '')
+      if (!contentCacheRef.current.has(v.id)) {
+        const res = await fetch(`/api/files/${fileId}/versions?versionId=${v.id}`)
+        const data = await res.json()
+        if (res.ok) contentCacheRef.current.set(v.id, data.version?.content ?? '')
+      }
+      // 预取时间序上更早的相邻快照（列表下一条），失败静默——按钮禁用兜底
+      const idx = versions.findIndex((x) => x.id === v.id)
+      const older = idx >= 0 ? versions[idx + 1] : undefined
+      if (older && !contentCacheRef.current.has(older.id)) {
+        const res2 = await fetch(
+          `/api/files/${fileId}/versions?versionId=${older.id}`
+        )
+        if (res2.ok) {
+          const data2 = await res2.json()
+          contentCacheRef.current.set(older.id, data2.version?.content ?? '')
+        }
+      }
     } finally {
       setPreviewLoading(false)
     }
@@ -184,6 +200,17 @@ export function VersionHistoryDialog({
       setRollingBack(false)
     }
   }
+
+  /** 展开条目的上一版（列表时间倒序，下一条即更早一版）；首条无上一版 */
+  const expandedIndex = versions.findIndex((v) => v.id === expandedId)
+  const prevVersion = expandedIndex >= 0 ? versions[expandedIndex + 1] : undefined
+  const prevContent = prevVersion ? contentCacheRef.current.get(prevVersion.id) : undefined
+
+  /** 取 diff 基准内容与标签：diff-current 对比当前文件，diff-prev 对比上一版快照 */
+  const diffBase =
+    viewMode === 'diff-prev'
+      ? { content: typeof prevContent === 'string' ? prevContent : null, label: '上一版' }
+      : { content: currentContent, label: '当前' }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -274,19 +301,37 @@ export function VersionHistoryDialog({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setViewMode('diff')}
-                                aria-pressed={viewMode === 'diff'}
+                                onClick={() => setViewMode('diff-current')}
+                                aria-pressed={viewMode === 'diff-current'}
                                 disabled={currentContent === null}
                                 className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                                  viewMode === 'diff'
+                                  viewMode === 'diff-current'
                                     ? 'bg-clay/10 text-clay'
                                     : 'text-muted-foreground hover:bg-muted'
                                 }`}
                               >
                                 <FileDiff className="h-3 w-3" /> 与当前对比
                               </button>
-                              {viewMode === 'diff' && currentContent !== null && (
-                                <DiffStatsBadge version={content} current={currentContent} />
+                              <button
+                                type="button"
+                                onClick={() => setViewMode('diff-prev')}
+                                aria-pressed={viewMode === 'diff-prev'}
+                                disabled={!prevVersion || typeof prevContent !== 'string'}
+                                title={
+                                  prevVersion
+                                    ? `对比 ${formatRelative(prevVersion.createdAt)} 的上一版快照`
+                                    : '该快照没有更早的版本（最早一条）'
+                                }
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  viewMode === 'diff-prev'
+                                    ? 'bg-clay/10 text-clay'
+                                    : 'text-muted-foreground hover:bg-muted'
+                                }`}
+                              >
+                                <GitCompareArrows className="h-3 w-3" /> 与上一版对比
+                              </button>
+                              {viewMode !== 'preview' && diffBase.content !== null && (
+                                <DiffStatsBadge version={content} base={diffBase.content} />
                               )}
                             </div>
                             {viewMode === 'preview' ? (
@@ -296,11 +341,12 @@ export function VersionHistoryDialog({
                                     ? `\n… 共 ${content.split('\n').length.toLocaleString()} 行`
                                     : '')}
                               </pre>
-                            ) : currentContent !== null ? (
+                            ) : diffBase.content !== null ? (
                               <DiffView
                                 version={content}
-                                current={currentContent}
-                                same={sameAsCurrent}
+                                base={diffBase.content}
+                                same={diffBase.content === content}
+                                baseLabel={diffBase.label}
                               />
                             ) : null}
                             <div className="mt-2 flex items-center justify-between gap-2">
@@ -343,11 +389,11 @@ export function VersionHistoryDialog({
   )
 }
 
-/** diff 统计徽标：+新增 / -删除 行数 */
-function DiffStatsBadge({ version, current }: { version: string; current: string }) {
+/** diff 统计徽标：+新增 / -删除 行数（base 为对比基准：当前内容或上一版快照） */
+function DiffStatsBadge({ version, base }: { version: string; base: string }) {
   const stats = useMemo(
-    () => diffStats(buildDiffRows(version, current)),
-    [version, current]
+    () => diffStats(buildDiffRows(version, base)),
+    [version, base]
   )
   if (stats.add === 0 && stats.del === 0) {
     return <span className="text-[11px] text-muted-foreground">无差异</span>
@@ -363,18 +409,20 @@ function DiffStatsBadge({ version, current }: { version: string; current: string
 /** 紧凑行级 diff 视图：新增绿 / 删除红，超长截断提示 */
 function DiffView({
   version,
-  current,
+  base,
   same,
+  baseLabel,
 }: {
   version: string
-  current: string
+  base: string
   same: boolean
+  baseLabel: string
 }) {
-  const rows = useMemo(() => buildDiffRows(version, current), [version, current])
+  const rows = useMemo(() => buildDiffRows(version, base), [version, base])
   if (same) {
     return (
       <div className="rounded-md border border-border/60 bg-muted/40 px-2.5 py-3 text-xs text-muted-foreground">
-        快照与当前内容完全一致
+        快照与{baseLabel}内容完全一致
       </div>
     )
   }

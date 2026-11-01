@@ -12,6 +12,7 @@ import {
   FileCode2,
   Loader2,
   MessageSquarePlus,
+  Archive,
   Paperclip,
   Pencil,
   Pin,
@@ -68,8 +69,10 @@ interface ChatPanelProps {
   onDeleteSession: (id: string) => void
   /** 切换会话置顶 */
   onTogglePin: (id: string, pinned: boolean) => void
-  /** 导入会话 JSON 备份（与导出闭环，建新会话并切过去） */
+  /** 导入会话备份（.json 单会话 / .zip 批量恢复，与导出闭环） */
   onImportSessionJson: (file: File) => void
+  /** 导出全部会话为 ZIP 备份（每会话一个 JSON + manifest） */
+  onExportAllSessions: () => void
   /** 导出会话为 JSON 备份（拉取该会话全部消息，结构化下载） */
   onExportSessionJson: (id: string) => void
   /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
@@ -162,6 +165,7 @@ export function ChatPanel({
   onDeleteSession,
   onTogglePin,
   onImportSessionJson,
+  onExportAllSessions,
   onExportSessionJson,
   onDuplicateSession,
   onSend,
@@ -863,9 +867,10 @@ export function ChatPanel({
           setDragOverHeader(false)
           const file = e.dataTransfer.files?.[0]
           if (!file) return
-          if (!file.name.toLowerCase().endsWith('.json')) {
+          const lower = file.name.toLowerCase()
+          if (!lower.endsWith('.json') && !lower.endsWith('.zip')) {
             e.preventDefault()
-            return // 非 json 文件交给默认行为（如拖到输入框附件），不做导入
+            return // 非 json / zip 文件交给默认行为（如拖到输入框附件），不做导入
           }
           e.preventDefault()
           onImportSessionJson(file)
@@ -915,7 +920,17 @@ export function ChatPanel({
               </button>
               <button
                 className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
-                title="导入会话 JSON 备份（与导出按钮配套，恢复备份为新会话）"
+                title="备份全部会话为 ZIP（每会话一个 JSON，可整包或单个恢复）"
+                onClick={() => {
+                  setSessionMenuOpen(false)
+                  onExportAllSessions()
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" /> 备份
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                title="导入会话备份：.json 单会话 / .zip 批量恢复"
                 onClick={() => importInputRef.current?.click()}
               >
                 <Upload className="h-3.5 w-3.5" /> 导入
@@ -923,7 +938,7 @@ export function ChatPanel({
               <input
                 ref={importInputRef}
                 type="file"
-                accept="application/json,.json"
+                accept="application/json,.json,application/zip,.zip"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]

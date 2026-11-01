@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History, Archive } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -1603,6 +1603,84 @@ export default function WorkspacePage() {
     [refreshSessions, loadMessages, toast]
   )
 
+  /** 导出全部会话为 ZIP 备份（每会话一个 JSON + manifest 清单，与批量导入闭环） */
+  const exportAllSessions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sessions/export')
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? `导出失败（HTTP ${res.status}）`)
+      }
+      const blob = await res.blob()
+      const now = new Date()
+      const dateTag = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `sessions-backup-${dateTag}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast({ title: '全部会话已备份', description: `sessions-backup-${dateTag}.zip` })
+    } catch (error) {
+      toast({
+        title: '备份失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    }
+  }, [toast])
+
+  /** 批量导入会话备份 ZIP（与导出闭环）：每会话独立校验，无效文件跳过并报告 */
+  const importSessionsZip = useCallback(
+    async (file: File) => {
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const res = await fetch('/api/sessions/import-batch', {
+          method: 'POST',
+          body: form,
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          const failed = (data.results ?? [])
+            .filter((r: { error?: string }) => r.error)
+            .slice(0, 3)
+            .map((r: { file: string; error?: string }) => `${r.file}：${r.error}`)
+            .join('；')
+          throw new Error(
+            (data.error ?? `导入失败（HTTP ${res.status}）`) + (failed ? `（${failed}）` : '')
+          )
+        }
+        await refreshSessions()
+        const failed = (data.results ?? []).filter(
+          (r: { error?: string }) => r.error
+        ) as { file: string; error?: string }[]
+        toast({
+          title: `已从 ZIP 导入 ${data.imported} 个会话`,
+          description: failed.length
+            ? `跳过 ${failed.length} 个：${failed[0].file}${failed[0].error ?? ''}`
+            : undefined,
+        })
+      } catch (error) {
+        toast({
+          title: '批量导入失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [refreshSessions, toast]
+  )
+
+  /** 导入入口分流：.zip 走批量会话恢复，其余走单会话 JSON 导入 */
+  const importSessionFile = useCallback(
+    (file: File) => {
+      if (/\.zip$/i.test(file.name)) void importSessionsZip(file)
+      else void importSessionJson(file)
+    },
+    [importSessionsZip, importSessionJson]
+  )
+
   /** 从全局搜索跳转：打开文件并定位到指定行 */
   const jumpToLine = useCallback(
     async (fileId: string, line: number) => {
@@ -1883,7 +1961,8 @@ export default function WorkspacePage() {
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
       onTogglePin={toggleSessionPinned}
-      onImportSessionJson={(file) => void importSessionJson(file)}
+      onImportSessionJson={importSessionFile}
+      onExportAllSessions={() => void exportAllSessions()}
       onExportSessionJson={(id) => void exportSessionJson(id)}
       onDuplicateSession={(id) => void duplicateSession(id)}
       onSend={sendMessage}
@@ -1964,6 +2043,16 @@ export default function WorkspacePage() {
           >
             <History className="h-4 w-4 text-clay" />
             <span>查看当前文件历史版本</span>
+          </CommandItem>
+          <CommandItem
+            value="备份全部会话 导出会话 ZIP"
+            onSelect={() => {
+              setCmdOpen(false)
+              void exportAllSessions()
+            }}
+          >
+            <Archive className="h-4 w-4 text-clay" />
+            <span>备份全部会话（ZIP）</span>
           </CommandItem>
           <CommandItem
             value="切换代码块自动换行 换行偏好"
