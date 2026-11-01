@@ -28,6 +28,7 @@ import {
   ListChecks,
   ListTree,
   SquarePen,
+  Star,
   WrapText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,9 @@ interface CodeBlockProps {
   /** 插入到编辑器当前光标位置 */
   onInsert?: (code: string) => void;
   insertDisabled?: boolean;
+  /** 已收藏（星星点亮）；与 onToggleFavorite 同时传入才显示按钮 */
+  favoriteActive?: boolean;
+  onToggleFavorite?: (code: string, language: string) => void;
 }
 
 /** 超过此行数的代码块默认折叠 */
@@ -198,7 +202,7 @@ function parseCodeBlocks(
   return blocks;
 }
 
-/** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件；超长自动折叠 */
+/** 带操作栏的代码块：复制 / 应用到文件 / 存为新文件 / 收藏；超长自动折叠 */
 function CodeBlock({
   language,
   code,
@@ -207,6 +211,8 @@ function CodeBlock({
   onSaveAs,
   onInsert,
   insertDisabled,
+  favoriteActive,
+  onToggleFavorite,
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -245,7 +251,7 @@ function CodeBlock({
       className={`my-2 overflow-hidden rounded-lg border border-border ${wrap ? "code-block-wrap" : ""}`}
     >
       <div className="flex items-center gap-2 border-b border-border bg-secondary/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-foreground">
           {language || "code"}
           <span className="mx-1.5 opacity-50">·</span>
           {lines.length} 行
@@ -302,6 +308,19 @@ function CodeBlock({
             >
               <FilePlus2 className="h-3 w-3" />
               存为新文件
+            </Button>
+          )}
+          {onToggleFavorite && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-6 w-6 px-0 ${favoriteActive ? "text-clay" : "text-muted-foreground"}`}
+              onClick={() => onToggleFavorite(code, language)}
+              aria-label={favoriteActive ? "取消收藏此代码块" : "收藏此代码块"}
+              aria-pressed={favoriteActive}
+              title={favoriteActive ? "取消收藏（收藏夹在对话面板头部 ☆）" : "收藏此代码块（收藏夹在对话面板头部 ☆）"}
+            >
+              <Star className={`h-3 w-3 ${favoriteActive ? "fill-current" : ""}`} />
             </Button>
           )}
           <Button
@@ -413,6 +432,10 @@ interface AiMessageProps {
   knownFiles?: { id: string; path: string }[];
   /** 点击命中的文件回调（打开该文件）；与 knownFiles 同时传入才生效 */
   onOpenFile?: (id: string) => void;
+  /** 已收藏代码块键集合（favoriteKey(lang, code)）；与 onToggleFavoriteCode 同时传入才显示收藏按钮 */
+  favoriteKeys?: Set<string>;
+  /** 收藏 / 取消收藏代码块 */
+  onToggleFavoriteCode?: (code: string, language: string) => void;
 }
 
 /** 折叠阈值：内容超过此高度显示「展开全文」（px） */
@@ -570,6 +593,8 @@ export const AiMessage = memo(function AiMessage({
   onToggleTask,
   knownFiles,
   onOpenFile,
+  favoriteKeys,
+  onToggleFavoriteCode,
 }: AiMessageProps) {
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
   // 任务列表进度：有任务项时在内容底部显示「任务 2/5」+ 迷你进度条（勾选后随 content 实时刷新）
@@ -855,6 +880,8 @@ export const AiMessage = memo(function AiMessage({
                       onSaveAs={onSaveAsCode}
                       onInsert={onInsertCode}
                       insertDisabled={insertDisabled}
+                      favoriteActive={favoriteKeys?.has(`${match[1]}\u0000${code}`)}
+                      onToggleFavorite={onToggleFavoriteCode}
                     />
                   );
                 }

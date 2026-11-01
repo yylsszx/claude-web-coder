@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ArrowDown,
   AtSign,
@@ -22,8 +22,10 @@ import {
   Quote,
   Search,
   SendHorizonal,
+  Settings2,
   Sparkles,
   Square,
+  Star,
   Trash2,
   Upload,
   User,
@@ -51,6 +53,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { AiMessage } from '@/components/workspace/ai-message'
+import { CustomPromptDialog, readCustomPrompt, subscribeCustomPrompt } from '@/components/workspace/custom-prompt-dialog'
+import { CodeFavoritesDialog } from '@/components/workspace/code-favorites-dialog'
+import {
+  favoriteKey,
+  readCodeFavorites,
+  removeCodeFavorite,
+  subscribeCodeFavorites,
+  toggleCodeFavorite,
+  type CodeFavorite,
+} from '@/lib/code-favorites'
 import { copyTextToClipboard } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { ChatMsg, FileMeta, SessionMeta } from '@/lib/types'
@@ -128,6 +140,9 @@ const STARTER_PROMPTS = [
 
 /** 输入历史的 localStorage 键前缀（按会话隔离，与草稿同套机制） */
 const HIST_KEY_PREFIX = 'cw-chat-hist-'
+
+/** useSyncExternalStore 的 SSR 空快照（稳定引用避免反复重渲染） */
+const EMPTY_FAVORITES: CodeFavorite[] = []
 
 /** 图片附件限制：每条消息最多 4 张，超过 1MB 或长边超 1600px 时压到 JPEG */
 const MAX_PENDING_IMAGES = 4
@@ -265,6 +280,22 @@ export function ChatPanel({
   const dragDepthRef = useRef(0)
   const [inlineRenameValue, setInlineRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
+  // ===== 代码块收藏夹：localStorage 外部存储（写入即广播事件，代码块星星与列表同步）=====
+  const [favOpen, setFavOpen] = useState(false)
+  const favorites = useSyncExternalStore(subscribeCodeFavorites, readCodeFavorites, () => EMPTY_FAVORITES)
+  const favKeys = useMemo(() => new Set(favorites.map((f) => favoriteKey(f.lang, f.code))), [favorites])
+  // ===== 自定义 AI 指令：头部指示点（保存/清除时广播事件同步）=====
+  const [promptOpen, setPromptOpen] = useState(false)
+  const customPromptActive = useSyncExternalStore(
+    subscribeCustomPrompt,
+    () => readCustomPrompt().length > 0,
+    () => false
+  )
+  /** 收藏 / 取消收藏代码块（favoriteActive 决定星星点亮，重复点击即取消） */
+  const toggleFavoriteCode = (code: string, language: string) => {
+    const added = toggleCodeFavorite(language, code)
+    toast({ title: added ? '已收藏到代码块收藏夹' : '已取消收藏' })
+  }
   // 消息级操作：复制反馈 / 内联编辑
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -1250,6 +1281,34 @@ export function ChatPanel({
         <Button
           variant="ghost"
           size="icon"
+          className="relative h-7 w-7 shrink-0"
+          onClick={() => setFavOpen(true)}
+          aria-label="代码块收藏夹"
+          title={favorites.length ? `代码块收藏夹（${favorites.length} 条）` : '代码块收藏夹'}
+        >
+          <Star className={`h-3.5 w-3.5 ${favorites.length ? 'fill-current text-clay' : 'text-muted-foreground'}`} />
+          {favorites.length > 0 && (
+            <span
+              className="absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-clay px-0.5 text-[8.5px] font-medium leading-none text-white"
+              aria-hidden
+            >
+              {favorites.length > 9 ? '9+' : favorites.length}
+            </span>
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          onClick={() => setPromptOpen(true)}
+          aria-label="自定义 AI 指令"
+          title={customPromptActive ? '自定义 AI 指令（已启用，点击查看/修改）' : '自定义 AI 指令（追加到系统提示词，全局生效）'}
+        >
+          <Settings2 className={`h-3.5 w-3.5 ${customPromptActive ? 'text-clay' : 'text-muted-foreground'}`} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
           className="h-7 w-7 shrink-0"
           onClick={onClear}
           disabled={loading}
@@ -1385,6 +1444,8 @@ export function ChatPanel({
                       }
                       knownFiles={files.map((f) => ({ id: f.id, path: f.path }))}
                       onOpenFile={onOpenFile}
+                      favoriteKeys={isStreaming(msg.id) ? undefined : favKeys}
+                      onToggleFavoriteCode={isStreaming(msg.id) ? undefined : toggleFavoriteCode}
                     />
                     {isStreaming(msg.id) && elapsedSec !== null && (
                       <div
@@ -1832,6 +1893,17 @@ export function ChatPanel({
         </DialogContent>
       </Dialog>
 
+      {/* 代码块收藏夹 */}
+      <CodeFavoritesDialog
+        open={favOpen}
+        onOpenChange={setFavOpen}
+        favorites={favorites}
+        onRemove={removeCodeFavorite}
+        onInsert={onInsertCode ?? (() => {})}
+        insertDisabled={!onInsertCode || !activeFilePath}
+      />
+      {/* 自定义 AI 指令 */}
+      <CustomPromptDialog open={promptOpen} onOpenChange={setPromptOpen} />
       {/* 删除会话确认 */}
       <AlertDialog
         open={!!deleteTarget}

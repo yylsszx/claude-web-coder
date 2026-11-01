@@ -17,6 +17,8 @@ const HISTORY_LIMIT = 10
 /** @ 引用的文件：最多 5 个，单个内容截断长度 */
 const MAX_REFERENCED_FILES = 5
 const MAX_REF_CONTENT_CHARS = 50000
+/** 自定义指令：最长字符数（前端输入框同步限制） */
+const MAX_CUSTOM_PROMPT_CHARS = 3000
 /** 图片附件：每条消息最多 4 张，单张 data URL 上限（约 3MB base64，前端已压缩） */
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_LENGTH = 4_200_000
@@ -105,6 +107,7 @@ export async function POST(request: NextRequest) {
   let attachments: string[] = []
   let regenerate = false
   let editMessageId: string | null = null
+  let customPrompt = ''
   try {
     const body = await request.json()
     message = typeof body.message === 'string' ? body.message.trim() : ''
@@ -127,6 +130,11 @@ export async function POST(request: NextRequest) {
       }
     }
     referencedFiles = parseReferencedFiles(body.referencedFiles)
+    // 自定义指令：可选，清洗后追加到系统提示词之后（对所有会话生效，重新生成/编辑重发同样遵守）
+    customPrompt =
+      typeof body.customPrompt === 'string'
+        ? body.customPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_CHARS)
+        : ''
   } catch {
     return Response.json({ error: '请求体解析失败' }, { status: 400 })
   }
@@ -204,8 +212,11 @@ export async function POST(request: NextRequest) {
   let upstream: ReadableStream<Uint8Array>
   try {
     zai = await ZAI.create()
+    const systemContent = customPrompt
+      ? `${SYSTEM_PROMPT}\n\n---\n[用户自定义指令]（与以上规则冲突时以自定义指令为准）：\n${customPrompt}`
+      : SYSTEM_PROMPT
     const sdkMessages = [
-      { role: 'assistant', content: SYSTEM_PROMPT },
+      { role: 'assistant', content: systemContent },
       ...historyMessages,
       // 有附件时 content 为多模态数组（text + image_url parts），纯文本保持字符串
       {

@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  CopyPlus,
   Download,
   FileCode,
   FileText,
@@ -238,6 +239,8 @@ interface FileTreeProps {
   onImportZip: (file: File) => void
   /** 右键「历史版本」：查看该文件快照（无需先打开文件） */
   onOpenVersions?: (file: FileMeta) => void
+  /** 创建副本：<base>-copy<ext> 不冲突命名，内容含未保存修改，创建后自动打开 */
+  onDuplicate?: (file: FileMeta) => void
   importingFiles: boolean
 }
 
@@ -256,6 +259,7 @@ export function FileTree({
   onImportFiles,
   onImportZip,
   onOpenVersions,
+  onDuplicate,
   importingFiles,
 }: FileTreeProps) {
   const { toast } = useToast()
@@ -592,6 +596,11 @@ export function FileTree({
               >
                 <Pencil className="h-3.5 w-3.5" /> 重命名
               </DropdownMenuItem>
+              {onDuplicate && (
+                <DropdownMenuItem onClick={() => onDuplicate(file)}>
+                  <CopyPlus className="h-3.5 w-3.5" /> 创建副本
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => void handleDownloadFile(file.id, file.path)}>
                 <Download className="h-3.5 w-3.5" /> 下载文件
               </DropdownMenuItem>
@@ -617,6 +626,11 @@ export function FileTree({
           >
             <Pencil className="h-3.5 w-3.5" /> 重命名
           </ContextMenuItem>
+          {onDuplicate && (
+            <ContextMenuItem onSelect={() => onDuplicate(file)}>
+              <CopyPlus className="h-3.5 w-3.5" /> 创建副本
+            </ContextMenuItem>
+          )}
           <ContextMenuItem onSelect={() => void handleDownloadFile(file.id, file.path)}>
             <Download className="h-3.5 w-3.5" /> 下载文件
           </ContextMenuItem>

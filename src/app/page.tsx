@@ -821,6 +821,49 @@ export default function WorkspacePage() {
     [refreshFiles, toast]
   )
 
+  /** 创建副本：以服务端列表推导不冲突路径（<base>-copy<ext>，冲突时 -copy2/-copy3…），
+   * 内容优先取未保存的标签实时内容，未打开则拉取服务端最新；创建后自动打开副本 */
+  const duplicateFile = useCallback(
+    async (file: FileMeta) => {
+      try {
+        let content: string | undefined
+        const tab = openTabsRef.current.find((t) => t.id === file.id)
+        if (tab) {
+          content = tab.content
+        } else {
+          const res = await fetch(`/api/files/${file.id}`)
+          if (res.ok) content = (await res.json())?.file?.content ?? ''
+        }
+        if (content === undefined) throw new Error('文件内容获取失败')
+        const listRes = await fetch('/api/files')
+        const listData = await listRes.json()
+        const existing = new Set<string>(
+          listRes.ok ? ((listData.files ?? []) as FileMeta[]).map((f) => f.path) : []
+        )
+        const sep = file.path.lastIndexOf('/')
+        const dot = file.path.lastIndexOf('.')
+        // 扩展名点必须在目录分隔符之后且不是开头点（.gitkeep 归无扩展名）
+        const hasExt = dot > sep + 1
+        const base = hasExt ? file.path.slice(0, dot) : file.path
+        const ext = hasExt ? file.path.slice(dot) : ''
+        let candidate = `${base}-copy${ext}`
+        let i = 2
+        while (existing.has(candidate)) {
+          candidate = `${base}-copy${i}${ext}`
+          i++
+        }
+        await createFile(candidate, content)
+      } catch (error) {
+        toast({
+          title: '创建副本失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [createFile, toast]
+  )
+
   const renameFile = useCallback(
     async (id: string, newPath: string): Promise<boolean> => {
       try {
@@ -1011,6 +1054,13 @@ export default function WorkspacePage() {
 
       const tab = activeTabRef.current
       const sessionId = activeSessionRef.current
+      // 自定义 AI 指令：发送时读 localStorage（含重新生成/编辑重发），为空不传字段
+      let customPrompt: string | undefined
+      try {
+        customPrompt = window.localStorage.getItem('cw-custom-prompt')?.trim() || undefined
+      } catch {
+        customPrompt = undefined
+      }
       let pending = ''
       let flushTimer: ReturnType<typeof setTimeout> | null = null
       // 流是否已建立：流开始前失败（网络不通 / 上游失败已回滚）与中途错误的重试语义不同
@@ -1036,6 +1086,7 @@ export default function WorkspacePage() {
             regenerate,
             editMessageId,
             attachments: attachments?.length ? attachments : undefined,
+            customPrompt,
             currentFile:
               includeFile && tab
                 ? { path: tab.path, content: tab.content, language: tab.language }
@@ -1924,6 +1975,7 @@ export default function WorkspacePage() {
       onCreateFolder={createFolder}
       onRename={renameFile}
       onDelete={deleteFile}
+      onDuplicate={(f) => void duplicateFile(f)}
       onMoveFile={moveFile}
       onMoveDir={moveDir}
       onQuickOpen={() => setQuickOpen(true)}
