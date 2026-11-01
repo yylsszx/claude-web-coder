@@ -766,12 +766,13 @@ export default function WorkspacePage() {
   }, [])
 
   const createFile = useCallback(
-    async (path: string): Promise<boolean> => {
+    async (path: string, content?: string): Promise<boolean> => {
       try {
         const res = await fetch('/api/files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path }),
+          // content 由新建对话框「模板骨架」可选提供；不传时后端落空字符串（行为不变）
+          body: JSON.stringify(content !== undefined ? { path, content } : { path }),
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? '创建失败')

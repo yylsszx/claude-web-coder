@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import type { Element as HastElement, Root as HastRoot, Text as HastText } from "hast";
 import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
@@ -457,6 +458,66 @@ function matchKnownFile(
   return hits.length === 1 ? hits[0].id : null;
 }
 
+/** 匹配「像文件路径」的 token：可带目录前缀 + 常见扩展名（是否真实存在由调用方精确匹配把关） */
+const FILE_PATH_TOKEN_RE =
+  /(?:[\w@.-]+\/)*[\w@.-]+\.(?:md|markdown|txt|json|ts|tsx|js|jsx|mjs|cjs|css|scss|html|htm|py|sql|ya?ml|toml|sh|prisma|gitignore)/g;
+
+/** 把纯文本节点按路径命中拆为 [文本, 内部链接, …]；无命中返回 null */
+function splitFilePathText(
+  node: HastText,
+  paths: Set<string>,
+): (HastText | HastElement)[] | null {
+  const value = node.value;
+  const out: (HastText | HastElement)[] = [];
+  let last = 0;
+  FILE_PATH_TOKEN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FILE_PATH_TOKEN_RE.exec(value))) {
+    const token = m[0];
+    // 仅点亮工作区现有文件的精确路径；basename 匹配交给行内代码的既有逻辑避免误点
+    if (!paths.has(token)) continue;
+    if (m.index > last) out.push({ type: "text", value: value.slice(last, m.index) });
+    out.push({
+      type: "element",
+      tagName: "a",
+      properties: { href: "#", dataWorkspaceFile: token, title: `打开 ${token}` },
+      children: [{ type: "text", value: token }],
+    });
+    last = m.index + token.length;
+  }
+  if (out.length === 0) return null;
+  if (last < value.length) out.push({ type: "text", value: value.slice(last) });
+  return out;
+}
+
+/**
+ * rehype 插件：纯文本节点中的工作区文件路径 → 标记为内部链接（data-workspace-file 属性），
+ * 由 a 组件覆写渲染为「打开文件」按钮。跳过 code / pre / a 子树：
+ * 行内代码已有点亮逻辑（matchKnownFile）避免双重处理，代码块/外链不参与。
+ */
+function rehypeWorkspaceFiles(paths: Set<string>) {
+  return (tree: HastRoot) => {
+    const visit = (parent: HastElement | HastRoot) => {
+      const children = parent.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        if (child.type === "element") {
+          if (child.tagName === "code" || child.tagName === "pre" || child.tagName === "a")
+            continue;
+          visit(child);
+        } else if (child.type === "text") {
+          const nodes = splitFilePathText(child as HastText, paths);
+          if (nodes) {
+            children.splice(i, 1, ...nodes);
+            i += nodes.length - 1;
+          }
+        }
+      }
+    };
+    visit(tree);
+  };
+}
+
 /** 统计 content 中的 GFM 任务项总数与已完成数（与 findTaskLineIdx 同款判定：跳过 ``` / ~~~ 围栏内假任务行，缩进限 0-3 空格排除缩进代码块） */
 function countTasks(content: string): { total: number; done: number } {
   const lines = content.split("\n");
@@ -513,6 +574,11 @@ export const AiMessage = memo(function AiMessage({
   const blocks = useMemo(() => parseCodeBlocks(content), [content]);
   // 任务列表进度：有任务项时在内容底部显示「任务 2/5」+ 迷你进度条（勾选后随 content 实时刷新）
   const taskStats = useMemo(() => countTasks(content), [content]);
+  // 纯文本路径链接化：knownFiles 变化（文件增删）时重建精确匹配集合，作为插件参数传入
+  const workspacePaths = useMemo(
+    () => new Set((knownFiles ?? []).map((f) => f.path)),
+    [knownFiles],
+  );
   // 标题目录：≥3 个标题的长回复在底部提供可展开目录，点击滚动到对应标题
   const headings = useMemo(() => parseHeadings(content), [content]);
   const [tocOpen, setTocOpen] = useState(false);
@@ -634,7 +700,12 @@ export const AiMessage = memo(function AiMessage({
         >
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
+            rehypePlugins={[
+              [rehypeKatex, { throwOnError: false, strict: false }],
+              // 元组形式传参：unified 会调用工厂（rehypeWorkspaceFiles(paths)）得到 transformer；
+              // 若直接传 transformer 实例会被误当 attacher 以 processor 为实参调用而崩溃
+              [rehypeWorkspaceFiles, workspacePaths],
+            ]}
             components={{
               /** 标题打 data-heading-idx（渲染序号 = 源文标题序，parseHeadings 同序）：供目录点击定位；保留原标签名以继承 .ai-markdown 标题样式 */
               h1({ children }) {
@@ -738,8 +809,27 @@ export const AiMessage = memo(function AiMessage({
                   />
                 );
               },
-              /** 链接一律新窗口打开，避免点击后整页跳走丢失工作台状态 */
-              a({ children, href }) {
+              /** 链接：内部标记（data-workspace-file，rehype 插件生成）→ 渲染为「打开文件」按钮；
+               * 外部链接一律新窗口打开，避免点击后整页跳走丢失工作台状态 */
+              a({ children, href, node }) {
+                const wfPath = node?.properties?.dataWorkspaceFile;
+                if (typeof wfPath === "string") {
+                  const fileId = knownFiles?.find((f) => f.path === wfPath)?.id;
+                  if (fileId && onOpenFile) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onOpenFile(fileId)}
+                        title={`打开 ${wfPath}`}
+                        className="text-clay underline decoration-clay/40 underline-offset-2 transition-colors hover:decoration-clay"
+                      >
+                        {children}
+                      </button>
+                    );
+                  }
+                  // 兜底：文件已被删除（不在 knownFiles）→ 降级为普通文本样式不可点
+                  return <span className="text-foreground/70">{children}</span>;
+                }
                 return (
                   <a
                     href={href}

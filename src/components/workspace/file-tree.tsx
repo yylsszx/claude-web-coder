@@ -117,6 +117,49 @@ function countFiles(node: TreeNode): number {
   return node.children.reduce((sum, child) => sum + countFiles(child), 0)
 }
 
+/** HTML 模板骨架（html / htm 共用） */
+const HTML_TEMPLATE_CONTENT = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>页面标题</title>
+</head>
+<body>
+  <h1>Hello</h1>
+</body>
+</html>
+`
+
+/** 新建文件可选模板骨架：按扩展名命中（勾选后以模板内容初始化，不勾仍是空文件） */
+const FILE_TEMPLATES: Record<string, { label: string; content: string }> = {
+  md: {
+    label: 'Markdown 文档',
+    content: '# 标题\n\n一句话说明。\n\n## 小节\n\n- 要点一\n- 要点二\n',
+  },
+  html: { label: 'HTML 页面', content: HTML_TEMPLATE_CONTENT },
+  htm: { label: 'HTML 页面', content: HTML_TEMPLATE_CONTENT },
+  py: {
+    label: 'Python 脚本',
+    content: 'def main():\n    pass\n\n\nif __name__ == "__main__":\n    main()\n',
+  },
+  json: {
+    label: 'JSON 数据',
+    content: '{\n  "name": "example",\n  "version": "1.0.0"\n}\n',
+  },
+  css: {
+    label: 'CSS 样式',
+    content: '/* 全局样式 */\n:root {\n  --accent: #d97757;\n}\n\nbody {\n  margin: 0;\n  font-family: sans-serif;\n}\n',
+  },
+}
+
+/** 从路径取可用模板（无命中返回 null） */
+function templateForPath(path: string) {
+  const dot = path.lastIndexOf('.')
+  if (dot <= 0 || dot === path.length - 1) return null
+  return FILE_TEMPLATES[path.slice(dot + 1).toLowerCase()] ?? null
+}
+
 function fileIcon(language: string) {
   if (language === 'json') return FileJson
   if (language === 'markdown') return FileText
@@ -179,7 +222,7 @@ interface FileTreeProps {
   /** 有未保存更改的文件 ID 列表（行尾显示橙点） */
   dirtyIds?: string[]
   onOpen: (id: string) => void
-  onCreate: (path: string) => Promise<boolean>
+  onCreate: (path: string, content?: string) => Promise<boolean>
   /** 新建文件夹（写入 <path>/.gitkeep 占位文件，不自动打开标签） */
   onCreateFolder: (path: string) => Promise<boolean>
   onRename: (id: string, newPath: string) => Promise<boolean>
@@ -225,6 +268,12 @@ export function FileTree({
   const [createMode, setCreateMode] = useState<'file' | 'folder'>('file')
   const [newPath, setNewPath] = useState('')
   const [creating, setCreating] = useState(false)
+  // 新建文件模板：路径扩展名命中模板时可勾选以骨架内容初始化（路径变化重置）
+  const [useTemplate, setUseTemplate] = useState(false)
+  const templateInfo = createMode === 'file' ? templateForPath(newPath) : null
+  useEffect(() => {
+    setUseTemplate(false)
+  }, [newPath, createMode])
   const [renameTarget, setRenameTarget] = useState<FileMeta | null>(null)
   const [renamePath, setRenamePath] = useState('')
   const [renaming, setRenaming] = useState(false)
@@ -345,7 +394,10 @@ export function FileTree({
     const ok =
       createMode === 'folder'
         ? await onCreateFolder(newPath.trim())
-        : await onCreate(newPath.trim())
+        : await onCreate(
+            newPath.trim(),
+            useTemplate && templateInfo ? templateInfo.content : undefined,
+          )
     setCreating(false)
     if (ok) {
       setCreateOpen(false)
@@ -838,6 +890,17 @@ export function FileTree({
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
+          {createMode === 'file' && templateInfo && (
+            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={useTemplate}
+                onChange={(e) => setUseTemplate(e.target.checked)}
+                className="h-3.5 w-3.5 accent-clay"
+              />
+              使用{templateInfo.label}模板骨架
+            </label>
+          )}
           <DialogFooter>
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>
               取消
