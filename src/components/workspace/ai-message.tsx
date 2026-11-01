@@ -72,9 +72,17 @@ function subscribeCodeWrap(fn: () => void) {
     codeWrapListeners.delete(fn);
   };
 }
+/** 读取换行偏好（命令面板展示当前态用） */
+export function getCodeWrapPreference(): boolean {
+  return codeWrapGlobal;
+}
+/** 设置换行偏好（命令面板切换入口；所有代码块经订阅同步） */
+export function setCodeWrapPreference(v: boolean) {
+  setCodeWrapGlobal(v);
+}
 /** 换行偏好订阅（useSyncExternalStore）：SSR 快照 false 与服务端一致，客户端挂载后取真实值，
-    所有代码块同步切换（避免 effect 内 setState 触发额外渲染） */
-function useCodeWrap(): [boolean, (v: boolean) => void] {
+    所有代码块同步切换（避免 effect 内 setState 触发额外渲染）；导出供命令面板镜像当前态 */
+export function useCodeWrap(): [boolean, (v: boolean) => void] {
   const v = useSyncExternalStore(
     subscribeCodeWrap,
     () => codeWrapGlobal,

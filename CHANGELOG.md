@@ -1,3 +1,9 @@
+## [0.49.0] - 2026-11-01
+- **会话导入 JSON（与导出闭环）**：会话下拉头部新增「导入」按钮（新建会话旁，Upload 图标 + 隐藏 file input，同文件可重复导入），选择 JSON 备份后校验（>2MB 拒绝、缺 messages 数组提示）并 POST 到 `POST /api/sessions` 扩展的导入模式（`{title, messages}`，向后兼容无 body 建空会话）：事务式建会话 + `createMany` 批量写消息，脏数据服务端过滤（role 限 user/assistant、content 非空），消息数上限 500，标题截断 60 字；导入的 createdAt 尽量还原（可解析时写原始时间，缺失用 now），完成后自动切到新会话并加载消息（与克隆后行为一致），toast 报告标题与条数
+- **命令面板「开启 / 关闭代码块自动换行」**：Ctrl/⌘ + K 新增操作项，label 随当前态切换（「开启 ↔ 关闭」），执行经 ai-message 导出的 `setCodeWrapPreference`（与代码块按钮、useSyncExternalStore 同一 store，全页代码块同步 + localStorage 持久化）
+- **命令面板「导出当前会话为 JSON 备份」**：与 Markdown 导出并列的操作项，复用会话导出实现（无活动会话时禁用）——导出 / 导入 / 格式化三类操作统一进命令面板
+- ESLint 0 错误 0 警告；src 目录 tsc 无类型错误
+
 ## [0.48.0] - 2026-11-01
 - **代码块「换行偏好」全局记忆**：自动换行开关从单代码块独立状态升级为全页共享偏好（`useSyncExternalStore` 订阅模块级 store，规避 effect 内 setState 的额外渲染），任一代码块切换，其余全部同步；并写入 localStorage，刷新 / 重开会话后保持——长行代码多的会话不用每个代码块挨个切了；SSR 快照 false 与服务端一致，无 hydration mismatch
 - **命令面板「格式化当前 JSON 文件」**：Ctrl/⌘ + K 新增操作项，走编辑器注册链路（`registerFormatJson` + ref 转发，避免依赖变化反复注册）调用与工具栏按钮同一实现；当前打开的不是 JSON 文件时 toast 提示——手在键盘上不想移到工具栏时一键直达

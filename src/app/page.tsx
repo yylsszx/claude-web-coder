@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { ToastAction } from '@/components/ui/toast'
 import { useToast } from '@/hooks/use-toast'
+import { setCodeWrapPreference, useCodeWrap } from '@/components/workspace/ai-message'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
 import { CodeEditor, type JumpTarget, type SaveState, type SelectionAction, type SelectionPayload } from '@/components/workspace/code-editor'
@@ -1431,6 +1432,56 @@ export default function WorkspacePage() {
     [sessions, toast]
   )
 
+  /** 从 JSON 备份导入会话（与导出闭环）：校验文件大小与 messages 结构，建会话后切到新会话 */
+  const importSessionJson = useCallback(
+    async (file: File) => {
+      if (file.size > 2 * 1024 * 1024) {
+        toast({ title: '文件过大', description: 'JSON 备份文件需小于 2MB', variant: 'destructive' })
+        return
+      }
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text) as {
+          session?: { title?: unknown }
+          messages?: unknown
+        }
+        if (!data || !Array.isArray(data.messages) || data.messages.length === 0) {
+          throw new Error('文件中没有可导入的消息（缺少 messages 数组）')
+        }
+        const res = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title:
+              typeof data.session?.title === 'string'
+                ? data.session.title
+                : undefined,
+            messages: data.messages,
+          }),
+        })
+        const payload = await res.json()
+        if (!res.ok) throw new Error(payload.error ?? `导入失败（HTTP ${res.status}）`)
+        await refreshSessions()
+        // 切到导入的会话并加载消息（与克隆后的行为一致）
+        setActiveSessionId(payload.session.id)
+        setStreamingId(null)
+        await loadMessages(payload.session.id)
+        toast({
+          title: '会话已导入',
+          description: `「${payload.session.title}」，${payload.session.messageCount} 条消息`,
+        })
+      } catch (error) {
+        toast({
+          title: '导入失败',
+          description:
+            error instanceof Error ? error.message : '请检查 JSON 文件格式后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [refreshSessions, loadMessages, toast]
+  )
+
   /** 从全局搜索跳转：打开文件并定位到指定行 */
   const jumpToLine = useCallback(
     async (fileId: string, line: number) => {
@@ -1537,6 +1588,9 @@ export default function WorkspacePage() {
   const registerEditorFormatJson = useCallback((fn: () => void) => {
     editorFormatJsonRef.current = fn
   }, [])
+
+  // 代码块换行偏好镜像（命令面板项显示当前态；useSyncExternalStore 订阅同一 store，无 effect）
+  const [codeWrapOn] = useCodeWrap()
 
   /** 注册编辑器选区读取函数（稳定标识；供命令面板「让 AI 解释选中代码」使用） */
   const editorSelectionRef = useRef<(() => SelectionPayload | null) | null>(null)
@@ -1650,6 +1704,7 @@ export default function WorkspacePage() {
       onRenameSession={renameSession}
       onDeleteSession={deleteSession}
       onTogglePin={toggleSessionPinned}
+      onImportSessionJson={(file) => void importSessionJson(file)}
       onExportSessionJson={(id) => void exportSessionJson(id)}
       onDuplicateSession={(id) => void duplicateSession(id)}
       onSend={sendMessage}
@@ -1718,6 +1773,30 @@ export default function WorkspacePage() {
           >
             <Braces className="h-4 w-4 text-clay" />
             <span>格式化当前 JSON 文件</span>
+          </CommandItem>
+          <CommandItem
+            value="切换代码块自动换行 换行偏好"
+            onSelect={() => {
+              setCmdOpen(false)
+              setCodeWrapPreference(!codeWrapOn)
+            }}
+          >
+            <WrapText className="h-4 w-4 text-clay" />
+            <span>
+              {codeWrapOn ? '关闭代码块自动换行' : '开启代码块自动换行'}
+              （偏好全局记忆）
+            </span>
+          </CommandItem>
+          <CommandItem
+            value="导出当前会话 JSON 备份"
+            onSelect={() => {
+              setCmdOpen(false)
+              if (activeSessionId) void exportSessionJson(activeSessionId)
+            }}
+            disabled={!activeSessionId}
+          >
+            <FileJson className="h-4 w-4 text-clay" />
+            <span>导出当前会话为 JSON 备份</span>
           </CommandItem>
           {activeTab && (
             <CommandItem

@@ -23,6 +23,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Upload,
   User,
   X,
 } from 'lucide-react'
@@ -67,6 +68,8 @@ interface ChatPanelProps {
   onDeleteSession: (id: string) => void
   /** 切换会话置顶 */
   onTogglePin: (id: string, pinned: boolean) => void
+  /** 导入会话 JSON 备份（与导出闭环，建新会话并切过去） */
+  onImportSessionJson: (file: File) => void
   /** 导出会话为 JSON 备份（拉取该会话全部消息，结构化下载） */
   onExportSessionJson: (id: string) => void
   /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
@@ -158,6 +161,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onTogglePin,
+  onImportSessionJson,
   onExportSessionJson,
   onDuplicateSession,
   onSend,
@@ -176,6 +180,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
   // 智能滚动：用户接近底部时才跟随流式输出，向上翻阅时不再被拽回
   const stickToBottomRef = useRef(true)
   const [showJumpButton, setShowJumpButton] = useState(false)
@@ -860,15 +865,36 @@ export function ChatPanel({
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="w-72 p-1.5">
-            <button
-              className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-clay transition-colors hover:bg-accent"
-              onClick={() => {
-                setSessionMenuOpen(false)
-                onCreateSession()
-              }}
-            >
-              <MessageSquarePlus className="h-4 w-4" /> 新建会话
-            </button>
+            <div className="mb-1 flex gap-1">
+              <button
+                className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-clay transition-colors hover:bg-accent"
+                onClick={() => {
+                  setSessionMenuOpen(false)
+                  onCreateSession()
+                }}
+              >
+                <MessageSquarePlus className="h-4 w-4" /> 新建会话
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                title="导入会话 JSON 备份（与导出按钮配套，恢复备份为新会话）"
+                onClick={() => importInputRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5" /> 导入
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) onImportSessionJson(file)
+                  e.target.value = '' // 同一文件可重复导入
+                  setSessionMenuOpen(false)
+                }}
+              />
+            </div>
             <div className="pb-1">
               <Input
                 value={sessionFilter}
