@@ -1,3 +1,11 @@
+## [0.58.0] - 2026-11-01
+- **编辑器缩进宽度设置（2/4 空格切换）**：显示偏好组新增「Nsp」按钮（字号调节与自动换行之间，分隔线隔开）——循环切换缩进宽度 2 ↔ 4，title 显示当前值与点击后将切换的值；偏好随 `EditorPrefs` 外部存储（localStorage `cw-editor-indent`，仅接受 2/4 其余回退默认，刷新后保持）；编辑器侧注入 `indentUnit.of(' '.repeat(n))` + `EditorState.tabSize.of(n)`——Tab 键插入、自动缩进、代码折叠对齐全部跟随，扩展 useMemo deps 纳入 indentWidth 切换即时生效（无重启）；Python/Go 等四空格惯例项目不再手动敲空格；实测：点按切换 2sp→4sp 显示与 localStorage 同步、Tab 实插 4 空格（首行 textContent 以 4 空格开头）、刷新后偏好保持
+- **文件树排序切换（按名称 / 按更新时间）**：文件标题行新增排序按钮——名称序（ArrowDownAZ 灰）↔ 时间序（Clock clay 橙，最新在前），aria-label 与 title 双语提示当前模式与点击去向；排序语义：目录永远在前且目录间按名称，文件按所选模式（时间同刻回退名称序保证稳定），目录内文件同规则递归；过滤结果树同享当前排序模式（buildTree 统一参数）；偏好持久化 localStorage `cw-tree-sort`（useState('name') 初始保证 SSR/首帧一致避免 hydration 差异，客户端 effect 读取持久化值）；实测：a/b/c 三文件按名称序 → 切时间序变 c/a/b（创建间隔 50ms 保证 updatedAt 可分）→ 刷新后保持 → 切回名称序
+- **浏览器标签页标题同步**：`document.title` 跟随活动文件——`<basename> — Claude 风格 AI 编程工作台`，关闭全部标签恢复默认标题；多标签多窗口场景一眼分辨工作对象；依赖 activeTabPath（useMemo 派生）做 useEffect deps，避免整对象比较
+- 修复过程中的关键教训：e2e 里「点击目录展开」在展开态已持久化（localStorage file-tree-expanded）时会**切换为折叠**——刷新后目录仍在展开态，测试再点一次反而把文件藏起来（第一次 FAIL 刷新断言为空数组、第二次 FAIL 找不到 a-one.md 超时）；统一改为「目标文件可见则不点目录」的守卫式断言
+- 测试数据用后即清：sorttest/ 三文件与 indenttest.ts 逐个 DELETE，复查树内零残留；编辑器偏好（缩进）测试后点回默认值
+- ESLint 0 错误 0 警告；src 目录 tsc 无类型错误；build 通过
+
 ## [0.57.0] - 2026-11-01
 - **编辑器缩进标记线（VS Code 风格 indent guides）**：接入 `@replit/codemirror-indentation-markers`（v6.5.3），按缩进层级在每行左侧绘制竖线（line decoration + `::before` 伪元素 `repeating-linear-gradient`，宽度以 `ch` 对齐缩进单元），嵌套结构一眼看清；开启 `highlightActiveBlock`——光标所在代码块的那一级标记自动变为 clay 橙（#d97757）加粗，其余层级淡灰（亮色 #e5ded2 / 暗色 #3d3a34），配色随主题亮暗切换；扩展挂在 `extensions` useMemo 的 base 数组（全语言生效，预览模式编辑器卸载自然隐藏）；实测 `.cm-indent-markers` 行装饰逐断言：4 行 2 级缩进的 ts 文件恰好 2 条标记线（level 0 行不画）、CSS 变量 `--indent-marker-bg-color`/`--indent-marker-active-bg-color` 精确等于配置色、伪元素 backgroundImage 为 repeating-linear-gradient 且 rgb(217,119,87) 即 clay
 - **文件树快速过滤框**：工具栏新增「过滤文件」开关按钮（ListFilter 图标，开启时 clay 高亮 + aria-pressed），展开树内过滤行——按**完整路径包含**匹配（大小写不敏感），命中文件的祖先目录链由 buildTree 自动保留；过滤生效时目录强制展开（否则命中文件可能藏在折叠目录里）并忽略 localStorage 折叠态、目录行点击不响应（折叠无意义）、「全部折叠」按钮同步禁用（title 提示「过滤中不适用折叠」）；下方实时计数「n 个匹配文件」/「无匹配文件，试试其他关键词」，输入框内一键清空（X）后恢复完整树，Esc 关闭整行并清空关键词（下次打开不残留旧词）；目录行尾计数在过滤下自动变为「子树内命中数」；实测：过滤 never-expanded 的 hidden 目录 → ghost.js 直出（强制展开生效）+ 树内文件节点恰好 1 个（排他性，用 [data-file-id] 断言而非 body 全文——空态「最近更新」列表会干扰）+ Esc/清空/无匹配/刷新后不残留全通过

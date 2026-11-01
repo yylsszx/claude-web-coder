@@ -113,6 +113,14 @@ export default function WorkspacePage() {
     [openTabs, activeTabId]
   )
 
+  // 浏览器标签页标题跟随当前文件（多标签多窗口时一眼分辨工作对象；关全部恢复默认标题）
+  const activeTabPath = activeTab?.path ?? null
+  useEffect(() => {
+    document.title = activeTabPath
+      ? `${activeTabPath.split('/').pop()} — Claude 风格 AI 编程工作台`
+      : 'Claude 风格 AI 编程工作台'
+  }, [activeTabPath])
+
   // refs：异步回调中读取最新值
   const openTabsRef = useRef(openTabs)
   openTabsRef.current = openTabs

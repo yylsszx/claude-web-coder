@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  ArrowDownAZ,
   BarChart3,
   ChevronsDownUp,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Download,
   FileCode,
@@ -69,8 +71,8 @@ interface TreeNode {
   children: TreeNode[]
 }
 
-/** 由扁平文件列表构建目录树 */
-function buildTree(files: FileMeta[]): TreeNode[] {
+/** 由扁平文件列表构建目录树；文件排序：name = 名称字典序，time = 最近更新在前（目录始终在前且按名称） */
+function buildTree(files: FileMeta[], sortBy: 'name' | 'time' = 'name'): TreeNode[] {
   const root: TreeNode = { name: '', isFolder: true, children: [] }
 
   for (const file of files) {
@@ -92,11 +94,15 @@ function buildTree(files: FileMeta[]): TreeNode[] {
     })
   }
 
-  // 排序：文件夹在前，文件夹/文件各自按名称排序
+  // 排序：文件夹在前（目录间按名称）；文件按所选模式（名称 / 更新时间倒序）
   const sortNodes = (nodes: TreeNode[]): TreeNode[] => {
     nodes.sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1
-      return a.name.localeCompare(b.name)
+      if (a.isFolder || sortBy === 'name') return a.name.localeCompare(b.name)
+      const ta = a.file?.updatedAt ?? ''
+      const tb = b.file?.updatedAt ?? ''
+      if (ta !== tb) return ta > tb ? -1 : 1
+      return a.name.localeCompare(b.name) // 同刻回退名称序，保证稳定
     })
     nodes.forEach((n) => sortNodes(n.children))
     return nodes
@@ -228,6 +234,26 @@ export function FileTree({
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState('')
   const [statsOpen, setStatsOpen] = useState(false)
+  // 文件排序模式：name（默认，SSR/首帧一致避免 hydration 差异）→ 客户端读取持久化值
+  const [sortBy, setSortBy] = useState<'name' | 'time'>('name')
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('cw-tree-sort') === 'time') setSortBy('time')
+    } catch {
+      /* 存储不可用时保持默认 */
+    }
+  }, [])
+  const toggleSortMode = () => {
+    setSortBy((cur) => {
+      const next = cur === 'name' ? 'time' : 'name'
+      try {
+        localStorage.setItem('cw-tree-sort', next)
+      } catch {
+        /* 存储不可用时仅内存生效 */
+      }
+      return next
+    })
+  }
 
   // 切换标签 / 打开文件时，文件树自动滚动到当前文件（不在可视区才滚，不打扰手动浏览）
   useEffect(() => {
@@ -250,7 +276,7 @@ export function FileTree({
   const isOwnSubtree = (dragDir: string | null, target: string) =>
     !!dragDir && (target === dragDir || target.startsWith(`${dragDir}/`))
 
-  const tree = useMemo(() => buildTree(files), [files])
+  const tree = useMemo(() => buildTree(files, sortBy), [files, sortBy])
 
   /** 过滤是否生效（开关打开且有关键词）；命中时目录强制展开、忽略 localStorage 折叠态 */
   const filterActive = filterOpen && filterQuery.trim().length > 0
@@ -259,8 +285,8 @@ export function FileTree({
     const q = filterQuery.trim().toLowerCase()
     if (!q) return null
     const matched = files.filter((f) => f.path.toLowerCase().includes(q))
-    return { tree: buildTree(matched), count: matched.length }
-  }, [files, filterQuery])
+    return { tree: buildTree(matched, sortBy), count: matched.length }
+  }, [files, filterQuery, sortBy])
 
   /** 树里是否有目录节点：决定「全部折叠」按钮是否可用 */
   const hasFolders = useMemo(() => {
@@ -607,6 +633,24 @@ export function FileTree({
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="font-claude-serif text-[15px] font-semibold text-foreground">文件</h2>
         <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={toggleSortMode}
+            aria-label={sortBy === 'name' ? '切换为按更新时间排序' : '切换为按名称排序'}
+            title={
+              sortBy === 'name'
+                ? '当前：按名称排序（点击切换为按更新时间）'
+                : '当前：按更新时间排序（点击切换为按名称）'
+            }
+          >
+            {sortBy === 'name' ? (
+              <ArrowDownAZ className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <Clock className="h-4 w-4 text-clay" />
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="icon"

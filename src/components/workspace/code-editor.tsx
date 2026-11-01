@@ -13,9 +13,9 @@ import CodeMirror from '@uiw/react-codemirror'
 import { useTheme } from 'next-themes'
 import { EditorView, keymap } from '@codemirror/view'
 import type { Command, ViewUpdate } from '@codemirror/view'
-import { EditorSelection, Prec } from '@codemirror/state'
+import { EditorSelection, EditorState, Prec } from '@codemirror/state'
 import { cursorMatchingBracket, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { foldAll, unfoldAll } from '@codemirror/language'
+import { foldAll, indentUnit, unfoldAll } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -250,14 +250,16 @@ const MD_VIEW_OPTIONS: { value: MdViewMode; label: string; icon: typeof Pencil }
 ]
 
 /**
- * 编辑器显示偏好（自动换行 / 字号）作为外部存储（localStorage）：
+ * 编辑器显示偏好（自动换行 / 字号 / 缩进宽度）作为外部存储（localStorage）：
  * SSR 快照返回默认值，客户端读取缓存值，避免 hydration 不一致与 effect 内 setState
  */
 interface EditorPrefs {
   wrap: boolean
   font: number
+  /** 缩进宽度（空格数）：2 或 4，控制 Tab 键插入与自动缩进单位 */
+  indent: number
 }
-const DEFAULT_PREFS: EditorPrefs = { wrap: false, font: 13.5 }
+const DEFAULT_PREFS: EditorPrefs = { wrap: false, font: 13.5, indent: 2 }
 let prefsCache: EditorPrefs | null = null
 const prefsListeners = new Set<() => void>()
 
@@ -266,9 +268,11 @@ function readEditorPrefs(): EditorPrefs {
   let next = DEFAULT_PREFS
   try {
     const font = Number(localStorage.getItem('cw-editor-font'))
+    const indent = Number(localStorage.getItem('cw-editor-indent'))
     next = {
       wrap: localStorage.getItem('cw-editor-wrap') === '1',
       font: Number.isFinite(font) && font >= 11 && font <= 18 ? font : DEFAULT_PREFS.font,
+      indent: indent === 4 ? 4 : 2, // 仅接受 2 / 4，其余回退默认
     }
   } catch {
     /* 存储不可用时用默认值 */
@@ -283,6 +287,7 @@ function writeEditorPrefs(patch: Partial<EditorPrefs>) {
   try {
     localStorage.setItem('cw-editor-wrap', next.wrap ? '1' : '0')
     localStorage.setItem('cw-editor-font', String(next.font))
+    localStorage.setItem('cw-editor-indent', String(next.indent))
   } catch {
     /* 存储不可用时仅内存生效 */
   }
@@ -406,6 +411,9 @@ export function CodeEditor({
   )
   const toggleWrap = useCallback(() => {
     writeEditorPrefs({ wrap: !readEditorPrefs().wrap })
+  }, [])
+  const toggleIndent = useCallback(() => {
+    writeEditorPrefs({ indent: readEditorPrefs().indent === 2 ? 4 : 2 })
   }, [])
   const changeFontSize = useCallback((delta: number) => {
     const cur = readEditorPrefs().font
@@ -805,6 +813,7 @@ export function CodeEditor({
   const language = file?.language
   const wrapText = prefs.wrap
   const fontSize = prefs.font
+  const indentWidth = prefs.indent
   const extensions = useMemo<Extension[]>(() => {
     // 自定义键位：Ctrl/⌘ + D 复制行/选区，Alt + ↑/↓ 上下移动行块，Ctrl/⌘ + Shift + K 删行。
     // Prec.high 使其先于 basicSetup 内置 keymap：searchKeymap 的 Mod-d 是多光标 selectNextOccurrence，
@@ -824,6 +833,9 @@ export function CodeEditor({
         ]),
       ),
       keymap.of(searchKeymap),
+      // 缩进宽度：Tab 键插入与自动缩进单位跟随偏好（2/4 空格），tabSize 同步
+      indentUnit.of(' '.repeat(indentWidth)),
+      EditorState.tabSize.of(indentWidth),
       // 缩进标记线（VS Code 风格 indent guides）：按缩进层级绘制竖线，当前代码块所在层级
       // 用 clay 色加粗高亮（highlightActiveBlock），嵌套结构一眼看清；配色随亮暗主题切换
       ...indentationMarkers({
@@ -850,7 +862,7 @@ export function CodeEditor({
       )
     }
     return [...langExts, ...base]
-  }, [language, wrapText])
+  }, [language, wrapText, indentWidth])
 
   // 标签显示名：basename 重复时（如两个目录下各有 index.md）带上父目录段区分，无冲突保持纯文件名
   const tabLabels = useMemo(() => {
@@ -1212,6 +1224,16 @@ export function CodeEditor({
             }`}
           >
             <WrapText className="h-3 w-3" />
+          </button>
+          <span className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+          <button
+            type="button"
+            onClick={toggleIndent}
+            title={`缩进宽度：${indentWidth} 空格（点击切换为 ${indentWidth === 2 ? 4 : 2}）`}
+            aria-label="切换缩进宽度"
+            className="flex h-5 shrink-0 items-center rounded px-1 text-[10.5px] tabular-nums text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+          >
+            {indentWidth}sp
           </button>
         </div>
         {showEditor && (
