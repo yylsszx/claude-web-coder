@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ArrowDown,
   AtSign,
@@ -11,6 +11,7 @@ import {
   Eraser,
   FileCode2,
   ImagePlus,
+  ListTree,
   Loader2,
   MessageSquarePlus,
   Archive,
@@ -386,6 +387,35 @@ export function ChatPanel({
   // ===== 会话内消息搜索 =====
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  // ===== 消息大纲（长会话快速跳转） =====
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  /** 滚动定位到指定消息并闪烁高亮（与 page.tsx flashMessage 同款：data-message-id + message-flash 动画） */
+  const jumpToMessage = useCallback((messageId: string) => {
+    setOutlineOpen(false) // 点击后收起大纲再定位
+    window.setTimeout(() => {
+      const el = document.querySelector(`[data-message-id="${messageId}"]`)
+      if (!el) return
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.classList.remove('message-flash') // 连续点击同一条时先复位再播
+      void (el as HTMLElement).offsetWidth // 触发 reflow 确保动画重新播放
+      el.classList.add('message-flash')
+      window.setTimeout(() => el.classList.remove('message-flash'), 2000)
+    }, 150)
+  }, [])
+  /** 大纲条目：仅用户消息（提问视角），样式文本截断 64 字符 */
+  const outlineEntries = useMemo(
+    () =>
+      messages
+        .filter((m) => m.role === 'user')
+        .map((m) => ({
+          id: m.id,
+          preview:
+            m.content.replace(/\s+/g, ' ').trim().slice(0, 64) +
+            (m.content.length > 64 ? '…' : ''),
+          time: m.createdAt,
+        })),
+    [messages],
+  )
   const searching = searchQuery.trim().length > 0
   const visibleMessages = useMemo(() => {
     if (!searching) return messages
@@ -1253,6 +1283,45 @@ export function ChatPanel({
         >
           <MessageSquarePlus className="h-4 w-4 text-muted-foreground" />
         </Button>
+        <Popover open={outlineOpen} onOpenChange={setOutlineOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              disabled={outlineEntries.length === 0}
+              aria-label="消息大纲"
+              title={outlineEntries.length ? `消息大纲（${outlineEntries.length} 个提问，点击快速跳转）` : '消息大纲'}
+            >
+              <ListTree className="h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" side="bottom" className="w-[320px] p-1.5">
+            {outlineEntries.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                本会话还没有提问
+              </p>
+            ) : (
+              <div className="thin-scrollbar max-h-[320px] overflow-y-auto">
+                {outlineEntries.map((entry, i) => (
+                  <button
+                    key={entry.id}
+                    className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-clay/8"
+                    onClick={() => jumpToMessage(entry.id)}
+                    aria-label={`跳转到第 ${i + 1} 条提问`}
+                  >
+                    <span className="mt-0.5 shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] leading-snug text-foreground/85">
+                      {entry.preview}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
         <Button
           variant="ghost"
           size="icon"
@@ -1878,6 +1947,17 @@ export function ChatPanel({
             }}
           />
         </div>
+        {/* 输入统计：字数与 token 粗估（中文场景按 chars/1.6 估算，仅作参考）；附件存在时一并列示 */}
+        {(input.length > 0 || pendingAttachments.filter(Boolean).length > 0) && (
+          <div className="flex items-center gap-2 px-1 pt-1 text-[10.5px] text-muted-foreground" aria-live="off">
+            <span aria-label="输入字数与 token 估算">
+              {input.length} 字 · ≈{Math.ceil(input.length / 1.6)} tokens
+            </span>
+            {pendingAttachments.filter(Boolean).length > 0 && (
+              <span aria-label="待发送图片数量">· 图片 {pendingAttachments.filter(Boolean).length}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 附件大图预览 */}

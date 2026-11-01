@@ -704,6 +704,12 @@ export default function WorkspacePage() {
         // Ctrl/⌘ + Shift + T 重开最近关闭的标签
         e.preventDefault()
         void reopenClosedTab()
+      } else if (e.altKey && !e.metaKey && !e.ctrlKey && /^[1-9]$/.test(e.key)) {
+        // Alt + 1..9 直达第 N 个打开的标签（超出已打开数量则忽略；输入框内同样生效）
+        e.preventDefault()
+        const tabs = openTabsRef.current
+        const target = tabs[Number(e.key) - 1]
+        if (target) setActiveTabId(target.id)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -1560,7 +1566,10 @@ export default function WorkspacePage() {
         const time = Number.isNaN(t.getTime())
           ? ''
           : `（${t.toLocaleString('zh-CN', { hour12: false })}）`
-        return `## ${m.role === 'user' ? '🙋 用户' : '✨ AI'}${time}\n\n${m.content.trim()}`
+        const pics = (m.attachments ?? [])
+          .map((src, i) => `![图片附件 ${i + 1}](${src})`)
+          .join('\n\n')
+        return `## ${m.role === 'user' ? '🙋 用户' : '✨ AI'}${time}\n\n${m.content.trim()}${pics ? `\n\n${pics}` : ''}`
       })
       .join('\n\n---\n\n')
     const md = `# 会话：${title}\n\n> 导出自 Claude 风格 AI 编程工作台 · ${stamp} · 共 ${msgs.length} 条消息\n\n---\n\n${body}\n`

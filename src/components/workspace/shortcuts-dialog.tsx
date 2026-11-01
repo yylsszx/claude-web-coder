@@ -26,6 +26,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Z / ⇧Z'], desc: '编辑器内：撤销 / 重做（也可用工具栏按钮）' },
       { keys: ['Ctrl/⌘', 'G'], desc: '焦点在编辑器：查找下一个；焦点在编辑器外：转到指定行' },
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
+      { keys: ['Alt', '1…9'], desc: '直达第 N 个打开的标签页' },
       { keys: ['Ctrl/⌘', 'Shift', 'T'], desc: '重新打开最近关闭的标签页' },
       { keys: ['Ctrl/⌘', 'Shift', 'K'], desc: '删除当前行 / 选区覆盖的行（可撤销）' },
       { keys: ['Ctrl/⌘', 'D'], desc: '复制当前行 / 选区（副本插到下方 / 选区之后并选中，可撤销）' },
