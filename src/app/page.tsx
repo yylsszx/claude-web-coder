@@ -1138,6 +1138,74 @@ export default function WorkspacePage() {
     [refreshFiles, toast]
   )
 
+  /** 目录重命名（只改最后一段名称）：批量前缀替换，同步打开标签的路径 */
+  const renameDir = useCallback(
+    async (dirPath: string, newBase: string): Promise<boolean> => {
+      try {
+        const res = await fetch('/api/files/rename-dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dirPath, newBase }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '重命名目录失败')
+        if (data.renamed > 0) {
+          await refreshFiles()
+          const parent = dirPath.split('/').slice(0, -1).join('/')
+          const oldPrefix = `${dirPath}/`
+          const newPrefix = parent ? `${parent}/${newBase}/` : `${newBase}/`
+          setOpenTabs((prev) =>
+            prev.map((t) =>
+              t.path.startsWith(oldPrefix)
+                ? { ...t, path: `${newPrefix}${t.path.slice(oldPrefix.length)}` }
+                : t
+            )
+          )
+          toast({
+            title: `已重命名文件夹（${data.renamed} 个文件）`,
+            description: `${dirPath}/ → ${newPrefix}*`,
+          })
+        }
+        return true
+      } catch (error) {
+        toast({
+          title: '重命名文件夹失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+        return false
+      }
+    },
+    [refreshFiles, toast]
+  )
+
+  /** 目录删除：批量删除目录下全部文件，并逐个关闭对应标签（复用 closeTab 的激活切换 / 固定清理链路） */
+  const deleteDir = useCallback(
+    async (dirPath: string) => {
+      try {
+        const res = await fetch('/api/files/rmdir', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dirPath }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '删除文件夹失败')
+        const oldPrefix = `${dirPath}/`
+        const affected = openTabsRef.current.filter((t) => t.path.startsWith(oldPrefix))
+        for (const t of affected) await closeTab(t.id)
+        await refreshFiles()
+        toast({ title: `已删除文件夹（${data.deleted} 个文件）`, description: `${dirPath}/` })
+      } catch (error) {
+        toast({
+          title: '删除文件夹失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [closeTab, refreshFiles, toast]
+  )
+
   const deleteFile = useCallback(
     async (id: string) => {
       try {
@@ -2171,6 +2239,8 @@ export default function WorkspacePage() {
       onDuplicate={(f) => void duplicateFile(f)}
       onMoveFile={moveFile}
       onMoveDir={moveDir}
+      onRenameDir={renameDir}
+      onDeleteDir={deleteDir}
       onQuickOpen={() => setQuickOpen(true)}
       onImportFiles={(dropped) => {
         // .zip 走压缩包导入端点，其余散文件走原导入链路

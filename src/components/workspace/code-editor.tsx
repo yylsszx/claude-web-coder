@@ -43,6 +43,7 @@ import {
   BookOpen,
   Braces,
   Check,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   CloudUpload,
@@ -1565,7 +1566,41 @@ export function CodeEditor({
 
       {/* 编辑器工具栏 */}
       <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2.5">
-        <span className="truncate font-mono text-[13px] text-foreground/85">{file.path}</span>
+        {/* 路径面包屑：目录段可点击，在文件树中定位该目录（复用 0.65 定位链路） */}
+        <div
+          className="flex min-w-0 items-center gap-0.5 overflow-hidden font-mono text-[13px]"
+          data-testid="editor-breadcrumb"
+        >
+          {file.path.split('/').map((seg, i, segs) =>
+            i < segs.length - 1 ? (
+              <span key={i} className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  className="rounded px-0.5 text-muted-foreground/80 transition-colors hover:bg-accent hover:text-clay"
+                  title={`在文件树中定位 ${segs.slice(0, i + 1).join('/')}`}
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent('cw-reveal-file', {
+                        detail: { path: segs.slice(0, i + 1).join('/') },
+                      })
+                    )
+                  }
+                >
+                  {seg}
+                </button>
+                <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </span>
+            ) : (
+              <span
+                key={i}
+                className="truncate text-foreground/85"
+                title={file.path}
+              >
+                {seg}
+              </span>
+            )
+          )}
+        </div>
         <Badge variant="secondary" className="shrink-0 text-[11px]">
           {LANGUAGE_LABELS[file.language] ?? file.language}
         </Badge>

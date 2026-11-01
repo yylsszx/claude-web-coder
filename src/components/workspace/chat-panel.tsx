@@ -205,6 +205,18 @@ const writeInputHistory = (sid: string | null, hist: string[]) => {
   }
 }
 
+/** 会话按最后更新时间分组：今天 / 昨天 / 7 天内 / 更早（本地时区零点起算，纯函数） */
+function sessionDateGroup(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return '更早'
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  if (t >= startOfToday) return '今天'
+  if (t >= startOfToday - 86_400_000) return '昨天'
+  if (t >= startOfToday - 7 * 86_400_000) return '7 天内'
+  return '更早'
+}
+
 export function ChatPanel({
   messages,
   loading,
@@ -1155,11 +1167,20 @@ export function ChatPanel({
               ) : (
               filteredSessions.map((session, idx) => {
                 const prev = idx > 0 ? filteredSessions[idx - 1] : null
-                const showDivider = Boolean(prev?.pinned) && !session.pinned
+                // 日期分组标题：置顶组「已置顶」，其余按最后更新时间分「今天 / 昨天 / 7 天内 / 更早」
+                const groupLabel = session.pinned ? '已置顶' : sessionDateGroup(session.updatedAt)
+                const prevLabel = prev
+                  ? prev.pinned
+                    ? '已置顶'
+                    : sessionDateGroup(prev.updatedAt)
+                  : null
+                const showHeader = groupLabel !== prevLabel
                 return (
                   <Fragment key={session.id}>
-                    {showDivider && (
-                      <div className="mx-2 my-1 border-t border-border/60" />
+                    {showHeader && (
+                      <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                        {groupLabel}
+                      </div>
                     )}
                     <div
                       data-session-row={session.id}

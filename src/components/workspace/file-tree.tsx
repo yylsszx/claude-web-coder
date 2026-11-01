@@ -233,6 +233,10 @@ interface FileTreeProps {
   onMoveFile?: (fileId: string, dirPath: string) => Promise<boolean>
   /** 拖拽移动目录到另一目录（批量改前缀走 move-dir 端点；targetPath 为 '' 表示移到根） */
   onMoveDir?: (dirPath: string, targetPath: string) => Promise<boolean>
+  /** 重命名文件夹（只改最后一段名称，子文件路径批量前缀替换） */
+  onRenameDir?: (dirPath: string, newBase: string) => Promise<boolean>
+  /** 删除文件夹（含全部子文件；已打开标签由页面侧关闭） */
+  onDeleteDir?: (dirPath: string) => Promise<void>
   onQuickOpen: () => void
   /** 拖拽本地文件到文件树导入工作区（.zip 会路由到压缩包导入端点） */
   onImportFiles: (dropped: File[]) => void
@@ -256,6 +260,8 @@ export function FileTree({
   onDelete,
   onMoveFile,
   onMoveDir,
+  onRenameDir,
+  onDeleteDir,
   onQuickOpen,
   onImportFiles,
   onImportZip,
@@ -284,6 +290,12 @@ export function FileTree({
   const [renaming, setRenaming] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FileMeta | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // 文件夹重命名 / 删除（目录级操作，与文件同名状态相互独立）
+  const [renameDirTarget, setRenameDirTarget] = useState<string | null>(null)
+  const [renameDirValue, setRenameDirValue] = useState('')
+  const [renamingDir, setRenamingDir] = useState(false)
+  const [deleteDirTarget, setDeleteDirTarget] = useState<string | null>(null)
+  const [deletingDir, setDeletingDir] = useState(false)
   // 树内快速过滤：开关 + 关键词（按完整路径包含匹配，命中文件的祖先目录自动保留）
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState('')
@@ -352,22 +364,21 @@ export function FileTree({
   /** 全部折叠：清空展开记录（localStorage 同步清空，刷新后保持折叠态） */
   const collapseAll = () => writeExpanded(new Set<string>())
 
-  /** 定位当前文件：逐级展开祖先目录（展开集合存带尾斜杠的目录路径），滚动到可见并闪烁高亮 */
-  const revealActiveFile = () => {
-    const active = files.find((f) => f.id === activeId)
-    if (!active) {
-      toast({ title: '当前没有打开的文件' })
-      return
-    }
-    const segs = active.path.split('/')
-    const next = new Set(expanded)
+  /** 在文件树中定位任意路径（文件完整路径或目录路径，均不带尾斜杠）：
+   *  逐级展开祖先目录（直接读 localStorage 最新展开集避免闭包陈旧），滚动到可见并闪烁高亮 */
+  const revealPath = (targetPath: string) => {
+    const segs = targetPath.split('/').filter(Boolean)
+    const next = new Set(readExpanded())
     for (let i = 1; i < segs.length; i++) next.add(segs.slice(0, i).join('/') + '/')
     writeExpanded(next)
     // 略等展开重渲染后再滚动 + 闪烁（与 message-flash 同款动画）
     window.setTimeout(() => {
-      const el = document.querySelector(`[data-file-id="${CSS.escape(active.id)}"]`) as HTMLElement | null
+      const fileId = files.find((f) => f.path === targetPath)?.id
+      const el = (fileId
+        ? document.querySelector(`[data-file-id="${CSS.escape(fileId)}"]`)
+        : document.querySelector(`[data-dir-path="${CSS.escape(targetPath)}"]`)) as HTMLElement | null
       if (!el) {
-        toast({ title: '未在文件树中找到该文件', description: '可能被树内过滤条件隐藏，请先清除过滤' })
+        toast({ title: '未在文件树中找到该路径', description: '可能被树内过滤条件隐藏，请先清除过滤' })
         return
       }
       el.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -377,6 +388,26 @@ export function FileTree({
       window.setTimeout(() => el.classList.remove('message-flash'), 2000)
     }, 80)
   }
+
+  /** 定位当前文件（工具栏按钮入口）：无打开文件时提示 */
+  const revealActiveFile = () => {
+    const active = files.find((f) => f.id === activeId)
+    if (!active) {
+      toast({ title: '当前没有打开的文件' })
+      return
+    }
+    revealPath(active.path)
+  }
+
+  // 编辑器面包屑等外部入口通过自定义事件请求定位（目录段 / 文件段均可）
+  useEffect(() => {
+    const onRevealFile = (e: Event) => {
+      const p = (e as CustomEvent<{ path?: string }>).detail?.path
+      if (typeof p === 'string' && p) revealPath(p)
+    }
+    window.addEventListener('cw-reveal-file', onRevealFile)
+    return () => window.removeEventListener('cw-reveal-file', onRevealFile)
+  })
 
   /** 复制路径到剪贴板（文件路径 / 目录前缀通用，toast 反馈避免无感知） */
   const handleCopyPath = async (path: string) => {
@@ -444,6 +475,29 @@ export function FileTree({
     if (ok) setRenameTarget(null)
   }
 
+  /** 提交文件夹重命名：只允许改最后一段名称（与原名相同视为取消） */
+  const handleRenameDir = async () => {
+    if (!renameDirTarget || !renameDirValue.trim()) return
+    const newBase = renameDirValue.trim().replace(/^\/+|\/+$/g, '')
+    const base = renameDirTarget.split('/').pop()
+    if (!newBase || newBase === base) {
+      setRenameDirTarget(null)
+      return
+    }
+    setRenamingDir(true)
+    const ok = (await onRenameDir?.(renameDirTarget, newBase)) ?? false
+    setRenamingDir(false)
+    if (ok) setRenameDirTarget(null)
+  }
+
+  const handleDeleteDir = async () => {
+    if (!deleteDirTarget) return
+    setDeletingDir(true)
+    await onDeleteDir?.(deleteDirTarget)
+    setDeletingDir(false)
+    setDeleteDirTarget(null)
+  }
+
   const handleDelete = async () => {
     if (!deleteTarget) return
     setDeleting(true)
@@ -466,6 +520,7 @@ export function FileTree({
               <ContextMenuTrigger asChild>
                 <button
                   draggable
+                  data-dir-path={dirPath}
                   onDragStart={(e) => {
                     e.dataTransfer.setData(DIR_ID_TYPE, dirPath)
                     e.dataTransfer.effectAllowed = 'move'
@@ -552,6 +607,24 @@ export function FileTree({
                 <ContextMenuItem onSelect={() => void handleCopyPath(dirPath)}>
                   <Copy className="h-3.5 w-3.5" /> 复制目录路径
                 </ContextMenuItem>
+                {onRenameDir && (
+                  <ContextMenuItem
+                    onSelect={() => {
+                      setRenameDirTarget(dirPath)
+                      setRenameDirValue(node.name)
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> 重命名文件夹
+                  </ContextMenuItem>
+                )}
+                {onDeleteDir && (
+                  <ContextMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setDeleteDirTarget(dirPath)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> 删除文件夹
+                  </ContextMenuItem>
+                )}
               </ContextMenuContent>
             </ContextMenu>
             {isOpen && renderNodes(node.children, depth + 1, `${prefix}${node.name}/`)}
@@ -990,6 +1063,70 @@ export function FileTree({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 重命名文件夹对话框（只改最后一段名称，子文件路径批量前缀替换） */}
+      <Dialog
+        open={!!renameDirTarget}
+        onOpenChange={(open) => !open && setRenameDirTarget(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-claude-serif">重命名文件夹</DialogTitle>
+            <DialogDescription>
+              只修改最后一段名称，<span className="font-medium">{renameDirTarget}/</span>{" "}
+              下全部文件的路径将同步更新
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={renameDirValue}
+            onChange={(e) => setRenameDirValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleRenameDir()}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setRenameDirTarget(null)}>
+              取消
+            </Button>
+            <Button onClick={handleRenameDir} disabled={renamingDir || !renameDirValue.trim()}>
+              {renamingDir && <Loader2 className="h-4 w-4 animate-spin" />} 保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除文件夹确认（显示将删除的文件数） */}
+      <AlertDialog
+        open={!!deleteDirTarget}
+        onOpenChange={(open) => !open && setDeleteDirTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-claude-serif">确认删除文件夹？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将永久删除 <span className="font-medium">{deleteDirTarget}/</span> 下全部{" "}
+              <span className="font-medium">
+                {deleteDirTarget
+                  ? files.filter((f) => f.path.startsWith(`${deleteDirTarget}/`)).length
+                  : 0}
+              </span>{" "}
+              个文件，此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault()
+                handleDeleteDir()
+              }}
+              disabled={deletingDir}
+            >
+              {deletingDir && <Loader2 className="h-4 w-4 animate-spin" />} 删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* 删除确认 */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
