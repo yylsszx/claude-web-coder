@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   FileCode,
   FileText,
   FileJson,
@@ -263,6 +264,30 @@ export function FileTree({
     })
   }
 
+  /** 右键「下载文件」：拉取最新内容（无需先打开文件）触发浏览器下载，文件名取路径末段 */
+  const handleDownloadFile = async (id: string, path: string) => {
+    try {
+      const res = await fetch(`/api/files/${id}`)
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? '获取文件失败')
+      const data = await res.json()
+      const content = typeof data.file?.content === 'string' ? data.file.content : ''
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = path.split('/').pop() || path
+      a.click()
+      URL.revokeObjectURL(url)
+      toast({ title: '文件已下载', description: path })
+    } catch (error) {
+      toast({
+        title: '下载失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    }
+  }
+
   const toggleFolder = (path: string) => {
     const next = new Set(expanded)
     if (next.has(path)) next.delete(path)
@@ -467,6 +492,9 @@ export function FileTree({
               >
                 <Pencil className="h-3.5 w-3.5" /> 重命名
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleDownloadFile(file.id, file.path)}>
+                <Download className="h-3.5 w-3.5" /> 下载文件
+              </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteTarget(file)}
@@ -488,6 +516,9 @@ export function FileTree({
             }}
           >
             <Pencil className="h-3.5 w-3.5" /> 重命名
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void handleDownloadFile(file.id, file.path)}>
+            <Download className="h-3.5 w-3.5" /> 下载文件
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => onOpenVersions?.(file)}>
             <History className="h-3.5 w-3.5" /> 历史版本

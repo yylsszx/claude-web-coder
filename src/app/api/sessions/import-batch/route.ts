@@ -7,8 +7,8 @@ export const runtime = 'nodejs'
 
 /** 上传 ZIP 大小上限 */
 const MAX_ZIP_BYTES = 20 * 1024 * 1024
-/** 单个会话 JSON 大小上限 */
-const MAX_ENTRY_BYTES = 2 * 1024 * 1024
+/** ZIP 批量恢复：单个会话 JSON 大小上限（带图片附件的会话较大，取 8MB） */
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024
 /** 单次最多导入会话数 */
 const MAX_SESSIONS = 100
 
@@ -102,6 +102,9 @@ export async function POST(request: NextRequest) {
             role: m.role,
             content: m.content,
             ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+            ...(m.attachments?.length
+              ? { attachments: JSON.stringify(m.attachments) }
+              : {}),
           })),
         })
         return s

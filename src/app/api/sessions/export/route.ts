@@ -3,8 +3,8 @@ import { db } from '@/lib/db'
 
 export const runtime = 'nodejs'
 
-/** 单会话 JSON 大小上限（超出跳过，防超大文件撑爆 zip） */
-const MAX_SESSION_BYTES = 2 * 1024 * 1024
+/** 单会话 JSON 大小上限（超出跳过，防超大文件撑爆 zip；带图片附件的会话较大，取 8MB） */
+const MAX_SESSION_BYTES = 8 * 1024 * 1024
 /** 会话数上限 */
 const MAX_SESSIONS = 200
 
@@ -60,11 +60,25 @@ export async function GET() {
         schemaVersion: 1,
         exportedAt: manifest.exportedAt,
         session: { title: session.title, messageCount: messages.length },
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt.toISOString(),
-        })),
+        messages: messages.map((m) => {
+          let attachments: string[] = []
+          try {
+            const parsed: unknown = m.attachments ? JSON.parse(m.attachments) : []
+            if (Array.isArray(parsed)) {
+              attachments = parsed.filter(
+                (x): x is string => typeof x === 'string' && x.startsWith('data:image/')
+              )
+            }
+          } catch {
+            attachments = []
+          }
+          return {
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt.toISOString(),
+            ...(attachments.length ? { attachments } : {}),
+          }
+        })
       }
       const json = JSON.stringify(payload, null, 2)
       if (Buffer.byteLength(json, 'utf8') > MAX_SESSION_BYTES) continue

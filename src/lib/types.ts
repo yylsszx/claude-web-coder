@@ -15,6 +15,8 @@ export interface ChatMsg {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** 图片附件（data URL 数组，仅用户消息） */
+  attachments?: string[]
   /** 流式生成耗时（毫秒）：仅本次会话由前端记录，历史消息 / 刷新后无此字段 */
   durationMs?: number
   /** 是否被用户手动中断生成（部分内容保留）：仅本次会话由前端标记，刷新后无此字段 */

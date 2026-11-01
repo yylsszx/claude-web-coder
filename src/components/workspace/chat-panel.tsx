@@ -10,6 +10,7 @@ import {
   Download,
   Eraser,
   FileCode2,
+  ImagePlus,
   Loader2,
   MessageSquarePlus,
   Archive,
@@ -51,6 +52,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { AiMessage } from '@/components/workspace/ai-message'
 import { copyTextToClipboard } from '@/lib/utils'
+import { useToast } from '@/hooks/use-toast'
 import type { ChatMsg, FileMeta, SessionMeta } from '@/lib/types'
 import { useMounted } from '@/hooks/use-mounted'
 
@@ -77,8 +79,8 @@ interface ChatPanelProps {
   onExportSessionJson: (id: string) => void
   /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
   onDuplicateSession: (id: string) => void
-  /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件 */
-  onSend: (message: string, includeFile: boolean, mentionIds?: string[]) => void
+  /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件；attachments 为图片附件 */
+  onSend: (message: string, includeFile: boolean, mentionIds?: string[], attachments?: string[]) => void
   onStop: () => void
   onClear: () => void
   onApplyCode: (code: string) => void
@@ -126,6 +128,39 @@ const STARTER_PROMPTS = [
 
 /** 输入历史的 localStorage 键前缀（按会话隔离，与草稿同套机制） */
 const HIST_KEY_PREFIX = 'cw-chat-hist-'
+
+/** 图片附件限制：每条消息最多 4 张，超过 1MB 或长边超 1600px 时压到 JPEG */
+const MAX_PENDING_IMAGES = 4
+
+/** 把图片文件读为 data URL（超过阈值时 canvas 重编码为 JPEG，先填白底保留透明区可读） */
+async function fileToCompressedDataUrl(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('读取失败'))
+    reader.readAsDataURL(file)
+  })
+  // SVG 交给浏览器矢量渲染，不栅格化
+  if (file.type === 'image/svg+xml') return dataUrl
+  const img = new Image()
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve()
+    img.onerror = () => reject(new Error('图片解码失败'))
+    img.src = dataUrl
+  })
+  const maxEdge = Math.max(img.naturalWidth, img.naturalHeight)
+  if (maxEdge <= 1600 && dataUrl.length <= 1_400_000) return dataUrl
+  const scale = Math.min(1, 1600 / maxEdge)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return dataUrl
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.85)
+}
 
 /** 读取某会话的输入历史（损坏 / 非数组数据当作空历史，截留最近 50 条） */
 const readInputHistory = (sid: string | null): string[] => {
@@ -183,6 +218,12 @@ export function ChatPanel({
   onDeleteMessage,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
+  const { toast } = useToast()
+  // 待发送图片附件（data URL 数组；随下一条消息发出后清空）
+  const [pendingAttachments, setPendingAttachments] = useState<string[]>([])
+  // 已发送消息的附件大图预览（点击缩略图打开）
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
   // 智能滚动：用户接近底部时才跟随流式输出，向上翻阅时不再被拽回
@@ -466,23 +507,26 @@ export function ChatPanel({
     return `${y}${t.getMonth() + 1}月${t.getDate()}日`
   }
 
-  /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件）；@ 引用随消息一并发出 */
+  /** 发送；forceIncludeFile 用于快捷指令（始终携带当前文件）；@ 引用随消息一并发出；图片附件随消息发出后清空 */
   const send = (text: string, forceIncludeFile?: boolean) => {
     const trimmed = text.trim()
-    if (!trimmed || loading) return
+    if ((!trimmed && pendingAttachments.length === 0) || loading) return
+    const attachments = pendingAttachments.length ? pendingAttachments : undefined
     onSend(
-      trimmed,
+      trimmed || '请看这张图',
       forceIncludeFile ?? (fileAttached && !!activeFilePath),
-      mentions.length ? mentions.map((m) => m.id) : undefined
+      mentions.length ? mentions.map((m) => m.id) : undefined,
+      attachments
     )
     // 记录到输入历史（去重连续重复；上限 50 条）并按会话持久化，回溯游标复位
     const hist = inputHistoryRef.current
-    if (hist[hist.length - 1] !== trimmed) hist.push(trimmed)
+    if (trimmed && hist[hist.length - 1] !== trimmed) hist.push(trimmed)
     if (hist.length > 50) hist.shift()
     histIndexRef.current = null
     histDraftRef.current = ''
     writeInputHistory(activeSessionId, hist)
     setInput('')
+    setPendingAttachments([])
     try {
       if (activeSessionId) localStorage.removeItem(`cw-chat-draft-${activeSessionId}`)
     } catch {
@@ -494,6 +538,54 @@ export function ChatPanel({
     // 用户主动发送：恢复跟随并滚到底部
     stickToBottomRef.current = true
     setShowJumpButton(false)
+  }
+
+  /** 把图片文件加入待发送区：仅 image/*，超上限截断并提示，逐个压缩后入列 */
+  const addImageFiles = async (fileList: FileList | File[]) => {
+    const images = Array.from(fileList).filter((f) => f.type.startsWith('image/'))
+    if (!images.length) return
+    if (images.length > MAX_PENDING_IMAGES) {
+      toast({
+        title: `单条消息最多 ${MAX_PENDING_IMAGES} 张图片`,
+        description: '已只保留前 4 张，其余忽略',
+      })
+    }
+    const candidates = images.slice(0, MAX_PENDING_IMAGES)
+    setPendingAttachments((prev) => {
+      const room = MAX_PENDING_IMAGES - prev.length
+      if (room <= 0) return prev
+      return [...prev, ...candidates.slice(0, room).map(() => '')] // 先占位（压缩完成前不渲染空项）
+    })
+    const compressed = await Promise.all(
+      candidates.map((f) =>
+        fileToCompressedDataUrl(f).catch(() => null)
+      )
+    )
+    setPendingAttachments((prev) => {
+      const next = [...prev]
+      let added = 0
+      let failed = 0
+      for (let i = 0; i < compressed.length; i++) {
+        const url = compressed[i]
+        const idx = next.indexOf('')
+        if (!url) {
+          failed++
+          if (idx !== -1) next.splice(idx, 1)
+          continue
+        }
+        if (idx !== -1) next[idx] = url
+        else if (next.length < MAX_PENDING_IMAGES) next.push(url)
+        added++
+      }
+      if (failed > 0) {
+        toast({
+          title: `${failed} 张图片读取失败`,
+          description: '仅支持常见图片格式，已跳过',
+          variant: 'destructive',
+        })
+      }
+      return added > 0 || failed > 0 ? next : prev
+    })
   }
 
   const isStreaming = (id: string) => id === streamingId
@@ -549,8 +641,15 @@ export function ChatPanel({
     return signals >= 2
   }
 
-  /** 粘贴多行代码自动包裹 Markdown 代码围栏（光标落在闭合围栏之后），其余照常粘贴 */
+  /** 粘贴：优先拦截剪贴板中的图片（截图直接发 AI），否则文本粘贴照旧 */
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files ?? [])
+    const hasImage = files.some((f) => f.type.startsWith('image/'))
+    if (hasImage) {
+      e.preventDefault()
+      void addImageFiles(files)
+      return
+    }
     const text = e.clipboardData.getData('text/plain')
     if (!text || !looksLikeCode(text)) return
     e.preventDefault()
@@ -1348,6 +1447,27 @@ export function ChatPanel({
                       : renderMentions(msg.content)}
                   </p>
                 )}
+                {/* 用户消息图片附件：缩略图行，点击放大预览 */}
+                {msg.role === 'user' && msg.attachments && msg.attachments.length > 0 && (
+                  <div className={"mt-1.5 flex flex-wrap gap-2" + (editingId === msg.id ? " opacity-60" : "")}>
+                    {msg.attachments.map((url, i) => (
+                      <button
+                        key={`${i}-${url.slice(-16)}`}
+                        className="overflow-hidden rounded-md border border-border transition-opacity hover:opacity-90"
+                        onClick={() => url && setPreviewImage(url)}
+                        title="点击放大"
+                        aria-label={`放大查看附件图片 ${i + 1}`}
+                      >
+                        <img
+                          src={url}
+                          alt={`附件图片 ${i + 1}`}
+                          className="h-20 w-20 object-cover"
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             {/* 悬浮操作行：AI 回复复制 + 重新生成（仅最后一条）；用户消息编辑（搜索过滤态下隐藏，索引已失真） */}
@@ -1571,6 +1691,36 @@ export function ChatPanel({
               ))}
             </div>
           )}
+          {/* 待发送图片附件预览 */}
+          {pendingAttachments.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-3 pt-2.5">
+              {pendingAttachments.map((url, i) => (
+                <span
+                  key={`${i}-${url.slice(-16)}`}
+                  className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border"
+                >
+                  {url ? (
+                    <img src={url} alt={`待发送图片 ${i + 1}`} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center bg-muted">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </span>
+                  )}
+                  <button
+                    className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm transition-colors hover:bg-destructive hover:text-white"
+                    title="移除这张图片"
+                    aria-label={`移除图片 ${i + 1}`}
+                    onClick={() => setPendingAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+              <span className="text-[10.5px] text-muted-foreground">
+                {pendingAttachments.filter(Boolean).length}/{MAX_PENDING_IMAGES} 张图片将随消息发送
+              </span>
+            </div>
+          )}
           {/* @ 文件引用下拉 */}
           {mentionOpen && (
             <div className="absolute bottom-full left-3 right-3 z-10 mb-1 overflow-hidden rounded-lg border border-border bg-card shadow-md">
@@ -1617,7 +1767,7 @@ export function ChatPanel({
                 : '向 AI 描述你的需求…（输入 @ 引用文件作为上下文）'
             }
             style={{ maxHeight: `${inputMaxH}px` }}
-            className="min-h-[72px] resize-none overflow-y-auto border-0 bg-transparent pr-12 text-[13.5px] focus-visible:ring-0"
+            className="min-h-[72px] resize-none overflow-y-auto border-0 bg-transparent pr-[4.75rem] text-[13.5px] focus-visible:ring-0"
           />
           {loading ? (
             <Button
@@ -1631,18 +1781,56 @@ export function ChatPanel({
               <Square className="h-3 w-3 fill-current text-clay" />
             </Button>
           ) : (
-            <Button
-              size="icon"
-              className="absolute bottom-2.5 right-2.5 h-8 w-8 rounded-lg"
-              onClick={() => send(input)}
-              disabled={!input.trim()}
-              aria-label="发送"
-            >
-              <SendHorizonal className="h-4 w-4" />
-            </Button>
+            <>
+              <Button
+                size="icon"
+                variant="secondary"
+                className="absolute bottom-2.5 right-[3.25rem] h-8 w-8 rounded-lg border border-border"
+                onClick={() => imageInputRef.current?.click()}
+                disabled={pendingAttachments.length >= MAX_PENDING_IMAGES}
+                aria-label="添加图片"
+                title="添加图片（也可直接粘贴截图）"
+              >
+                <ImagePlus className="h-4 w-4 text-muted-foreground" />
+              </Button>
+              <Button
+                size="icon"
+                className="absolute bottom-2.5 right-2.5 h-8 w-8 rounded-lg"
+                onClick={() => send(input)}
+                disabled={!input.trim() && pendingAttachments.filter(Boolean).length === 0}
+                aria-label="发送"
+              >
+                <SendHorizonal className="h-4 w-4" />
+              </Button>
+            </>
           )}
+          {/* 隐藏的图片选择 input（同一文件可重复选） */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) void addImageFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
         </div>
       </div>
+
+      {/* 附件大图预览 */}
+      <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
+        <DialogContent className="max-w-3xl p-2" aria-label="附件图片预览">
+          {previewImage && (
+            <img
+              src={previewImage}
+              alt="附件图片预览"
+              className="max-h-[75vh] w-full rounded-md object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* 删除会话确认 */}
       <AlertDialog

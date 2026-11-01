@@ -64,6 +64,9 @@ export async function POST(request: NextRequest) {
           role: m.role,
           content: m.content,
           ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+          ...(m.attachments?.length
+            ? { attachments: JSON.stringify(m.attachments) }
+            : {}),
         })),
       })
       return s

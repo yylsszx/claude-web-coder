@@ -44,12 +44,14 @@ model ChatSession {
 
 // AI 对话消息
 model ChatMessage {
-  id        String      @id @default(cuid())
-  sessionId String
-  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String // "user" | "assistant"
-  content   String
-  createdAt DateTime    @default(now())
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String // "user" | "assistant"
+  content     String
+  // 图片附件（JSON 数组的 data URL 字符串，仅用户消息；空数组表示无附件）
+  attachments String      @default("[]")
+  createdAt   DateTime    @default(now())
 
   @@index([sessionId])
 }

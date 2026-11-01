@@ -8,6 +8,21 @@ export interface ParsedImportMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt?: Date
+  /** 图片附件（data URL 数组，仅用户消息；导入时可选字段） */
+  attachments?: string[]
+}
+
+/** 单条消息附件上限（与发送链路一致） */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 4
+
+/** 清洗导入备份里的 attachments 字段：只留 data:image/ 前缀的字符串，上限 4 张；非数组 / 脏数据返回空数组 */
+export function sanitizeAttachments(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(
+      (item): item is string => typeof item === 'string' && item.startsWith('data:image/')
+    )
+    .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
 }
 
 export type SessionImportResult =
@@ -69,10 +84,14 @@ export function parseSessionImportBody(body: {
       // 尽量还原原始时间（可解析时），否则省略 createdAt（数据库 now 默认）
       const raw = rawCreatedAts.get(m)
       const t = raw !== undefined ? new Date(raw) : null
+      // 图片附件：仅用户消息携带（assistant 备份文件里即使带了也丢弃）
+      const attachments =
+        m.role === 'user' ? sanitizeAttachments((m as { attachments?: unknown }).attachments) : []
       return {
         role: m.role,
         content: m.content,
         ...(t && !Number.isNaN(t.getTime()) ? { createdAt: t } : {}),
+        ...(attachments.length ? { attachments } : {}),
       }
     })
 

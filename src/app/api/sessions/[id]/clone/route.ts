@@ -24,6 +24,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
             role: m.role,
             content: m.content,
             createdAt: m.createdAt,
+            attachments: m.attachments,
           })),
         },
       },

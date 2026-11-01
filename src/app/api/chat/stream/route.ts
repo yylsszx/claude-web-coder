@@ -17,6 +17,45 @@ const HISTORY_LIMIT = 10
 /** @ 引用的文件：最多 5 个，单个内容截断长度 */
 const MAX_REFERENCED_FILES = 5
 const MAX_REF_CONTENT_CHARS = 50000
+/** 图片附件：每条消息最多 4 张，单张 data URL 上限（约 3MB base64，前端已压缩） */
+const MAX_ATTACHMENTS = 4
+const MAX_ATTACHMENT_LENGTH = 4_200_000
+
+/** 从请求体提取合法的图片附件（data:image/...;base64,...），非法项直接丢弃 */
+function parseAttachments(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const urls: string[] = []
+  for (const item of raw) {
+    if (
+      typeof item === 'string' &&
+      item.startsWith('data:image/') &&
+      item.length <= MAX_ATTACHMENT_LENGTH &&
+      urls.length < MAX_ATTACHMENTS
+    ) {
+      urls.push(item)
+    }
+  }
+  return urls
+}
+
+/** 把附件 data URL 数组解析为 SDK 多模态 content 的 image_url parts */
+function imageParts(attachments: string[]): { type: 'image_url'; image_url: { url: string } }[] {
+  return attachments.map((url) => ({ type: 'image_url' as const, image_url: { url } }))
+}
+
+/** 安全解析消息表里的 attachments JSON（脏数据容错，只留合法 data URL） */
+function parseStoredAttachments(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is string => typeof item === 'string' && item.startsWith('data:image/')
+    )
+  } catch {
+    return []
+  }
+}
 
 interface ReferencedFile {
   path: string
@@ -63,6 +102,7 @@ export async function POST(request: NextRequest) {
   let requestedSessionId: string | null = null
   let currentFile: { path: string; content: string; language?: string } | null = null
   let referencedFiles: ReferencedFile[] = []
+  let attachments: string[] = []
   let regenerate = false
   let editMessageId: string | null = null
   try {
@@ -71,7 +111,8 @@ export async function POST(request: NextRequest) {
     requestedSessionId = typeof body.sessionId === 'string' ? body.sessionId : null
     regenerate = body.regenerate === true
     editMessageId = typeof body.editMessageId === 'string' && body.editMessageId ? body.editMessageId : null
-    if (!message) {
+    attachments = parseAttachments(body.attachments)
+    if (!message && !attachments.length) {
       return Response.json({ error: '消息不能为空' }, { status: 400 })
     }
     if (
@@ -94,13 +135,13 @@ export async function POST(request: NextRequest) {
   const sessionId = await resolveSessionId(requestedSessionId)
 
   // 确定本次对话对应的用户消息：新建 / 复用最后一条（重新生成）/ 编辑指定消息（编辑重发）
-  let savedUserMessage: { id: string; content: string; createdAt: Date }
+  let savedUserMessage: { id: string; content: string; attachments: string; createdAt: Date }
   if (editMessageId) {
     const target = await db.chatMessage.findUnique({ where: { id: editMessageId } })
     if (!target || target.sessionId !== sessionId || target.role !== 'user') {
       return Response.json({ error: '找不到可编辑的用户消息' }, { status: 400 })
     }
-    // 更新消息内容，并删除其后所有消息（含旧回复），随后重新流式生成
+    // 更新消息内容（图片附件保留原值，编辑只改文字），并删除其后所有消息（含旧回复），随后重新流式生成
     await db.chatMessage.deleteMany({
       where: { sessionId, createdAt: { gt: target.createdAt } },
     })
@@ -122,9 +163,16 @@ export async function POST(request: NextRequest) {
     })
     savedUserMessage = lastUser
     message = lastUser.content
+    // 重新生成时复用原消息的图片附件（前端无需传回）
+    attachments = parseStoredAttachments(lastUser.attachments)
   } else {
     savedUserMessage = await db.chatMessage.create({
-      data: { sessionId, role: 'user', content: message },
+      data: {
+        sessionId,
+        role: 'user',
+        content: message,
+        attachments: JSON.stringify(attachments),
+      },
     })
   }
 
@@ -156,15 +204,35 @@ export async function POST(request: NextRequest) {
   let upstream: ReadableStream<Uint8Array>
   try {
     zai = await ZAI.create()
-    const result = await zai.chat.completions.create({
-      messages: [
-        { role: 'assistant', content: SYSTEM_PROMPT },
-        ...historyMessages,
-        { role: 'user', content: userContent },
-      ],
-      stream: true,
-      thinking: { type: 'disabled' },
-    })
+    const sdkMessages = [
+      { role: 'assistant', content: SYSTEM_PROMPT },
+      ...historyMessages,
+      // 有附件时 content 为多模态数组（text + image_url parts），纯文本保持字符串
+      {
+        role: 'user' as const,
+        content:
+          attachments.length
+            ? ([{ type: 'text' as const, text: userContent || '（图片消息）' }, ...imageParts(attachments)] as const)
+            : userContent,
+      },
+    ]
+    // 图片附件必须走视觉模型端点（普通端点只接受 text content，上游会 400）
+    const result = await (attachments.length
+      ? zai.chat.completions.createVision({
+          // SDK 类型把 model 标成必填，实际上游可用默认模型；此处透传运行时参数
+          ...({
+            messages: sdkMessages,
+            stream: true,
+            thinking: { type: 'disabled' },
+          } as unknown as Parameters<typeof zai.chat.completions.createVision>[0]),
+        })
+      : zai.chat.completions.create({
+          messages: sdkMessages as unknown as Parameters<
+            typeof zai.chat.completions.create
+          >[0]['messages'],
+          stream: true,
+          thinking: { type: 'disabled' },
+        }))
     if (!(result instanceof ReadableStream)) {
       throw new Error('上游未返回流式响应')
     }

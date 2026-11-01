@@ -31,6 +31,7 @@ import { VersionHistoryDialog } from '@/components/workspace/version-history-dia
 import { ShortcutsDialog } from '@/components/workspace/shortcuts-dialog'
 import pkg from '../../package.json'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
+import { sanitizeAttachments } from '@/lib/session-import'
 
 const REPO_URL = 'https://github.com/yylsszx/claude-web-coder'
 
@@ -146,14 +147,29 @@ export default function WorkspacePage() {
 
   // 会话消息加载序号守卫：快速切换会话时，慢响应不得覆盖新会话的消息
   const loadMessagesSeqRef = useRef(0)
-  const loadMessages = useCallback(async (sessionId: string) => {
-    const seq = ++loadMessagesSeqRef.current
-    const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
-    const data = await res.json()
-    // 响应到达前用户已切到其他会话：丢弃过期数据，避免 UI 显示错误会话的内容
-    if (seq !== loadMessagesSeqRef.current) return
-    if (res.ok) setMessages(data.messages ?? [])
+  // DB 里 attachments 是 JSON 字符串，前端统一规范化为数组（脏数据容错）
+  const normalizeMsgs = useCallback((msgs: ChatMsg[]): ChatMsg[] => {
+    return msgs.map((m) => {
+      if (typeof (m as { attachments?: unknown }).attachments !== 'string') return m
+      try {
+        const arr: unknown = JSON.parse((m as unknown as { attachments: string }).attachments)
+        return { ...m, attachments: sanitizeAttachments(arr) }
+      } catch {
+        return { ...m, attachments: [] }
+      }
+    })
   }, [])
+  const loadMessages = useCallback(
+    async (sessionId: string) => {
+      const seq = ++loadMessagesSeqRef.current
+      const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
+      const data = await res.json()
+      // 响应到达前用户已切到其他会话：丢弃过期数据，避免 UI 显示错误会话的内容
+      if (seq !== loadMessagesSeqRef.current) return
+      if (res.ok) setMessages(normalizeMsgs(data.messages ?? []))
+    },
+    [normalizeMsgs]
+  )
 
   /** 滚动定位到指定消息并闪烁高亮（全局搜索命中消息跳转用） */
   const flashMessage = useCallback((messageId: string) => {
@@ -377,7 +393,7 @@ export default function WorkspacePage() {
           setActiveSessionId(list[0].id)
           const chatRes = await fetch(`/api/chat?sessionId=${encodeURIComponent(list[0].id)}`)
           const chatData = await chatRes.json()
-          if (!cancelled && chatRes.ok) setMessages(chatData.messages ?? [])
+          if (!cancelled && chatRes.ok) setMessages(normalizeMsgs(chatData.messages ?? []))
         }
       } finally {
         if (!cancelled) setInitialLoading(false)
@@ -898,8 +914,10 @@ export default function WorkspacePage() {
       includeFile?: boolean
       /** @ 引用的文件 ID 列表（仅普通发送；发送前逐个拉取内容传给后端） */
       mentionIds?: string[]
+      /** 图片附件（data URL 数组，仅普通发送；重新生成时服务端自动复用原消息附件） */
+      attachments?: string[]
     }) => {
-      const { message, regenerate, editMessageId, includeFile = true, mentionIds } = opts
+      const { message, regenerate, editMessageId, includeFile = true, mentionIds, attachments } = opts
       // 防止并发请求：已有流式请求进行中时忽略
       if (abortRef.current) return
       const startedAt = Date.now()
@@ -931,7 +949,13 @@ export default function WorkspacePage() {
         }
         return [
           ...prev,
-          { id: tempUserId, role: 'user' as const, content: message, createdAt: now },
+          {
+            id: tempUserId,
+            role: 'user' as const,
+            content: message,
+            createdAt: now,
+            ...(attachments?.length ? { attachments } : {}),
+          },
           { id: streamId, role: 'assistant' as const, content: '', createdAt: now },
         ]
       })
@@ -986,6 +1010,7 @@ export default function WorkspacePage() {
             sessionId,
             regenerate,
             editMessageId,
+            attachments: attachments?.length ? attachments : undefined,
             currentFile:
               includeFile && tab
                 ? { path: tab.path, content: tab.content, language: tab.language }
@@ -1124,9 +1149,9 @@ export default function WorkspacePage() {
 
   /** 发送消息（普通模式）；includeFile 由附件 chip 控制，mentionIds 为 @ 引用文件 */
   const sendMessage = useCallback(
-    (message: string, includeFile = true, mentionIds?: string[]) => {
+    (message: string, includeFile = true, mentionIds?: string[], attachments?: string[]) => {
       if (mentionIds?.length) setRecentMentionIds(mentionIds)
-      void runStream({ message, includeFile, mentionIds })
+      void runStream({ message, includeFile, mentionIds, attachments })
     },
     [runStream]
   )
@@ -1485,7 +1510,7 @@ export default function WorkspacePage() {
         const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`)
         if (!res.ok) throw new Error(`拉取消息失败（HTTP ${res.status}）`)
         const data = await res.json()
-        const msgs = (data.messages ?? []) as ChatMsg[]
+        const msgs = normalizeMsgs((data.messages ?? []) as ChatMsg[])
         const now = new Date()
         const payload = {
           app: 'claude-web-coder',
@@ -1496,6 +1521,7 @@ export default function WorkspacePage() {
             role: m.role,
             content: m.content,
             createdAt: m.createdAt,
+            ...(m.attachments?.length ? { attachments: m.attachments } : {}),
           })),
         }
         const dateTag = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -1528,8 +1554,8 @@ export default function WorkspacePage() {
   /** 从 JSON 备份导入会话（与导出闭环）：校验文件大小与 messages 结构，建会话后切到新会话 */
   const importSessionJson = useCallback(
     async (file: File) => {
-      if (file.size > 2 * 1024 * 1024) {
-        toast({ title: '文件过大', description: 'JSON 备份文件需小于 2MB', variant: 'destructive' })
+      if (file.size > 8 * 1024 * 1024) {
+        toast({ title: '文件过大', description: 'JSON 备份文件需小于 8MB', variant: 'destructive' })
         return
       }
       try {
