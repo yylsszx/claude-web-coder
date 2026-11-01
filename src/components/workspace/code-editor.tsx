@@ -67,6 +67,7 @@ import {
   Save,
   Search,
   Sparkles,
+  SquareFunction,
   SquarePen,
   WrapText,
   X,
@@ -81,6 +82,14 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -449,6 +458,101 @@ const deleteLines: Command = (view) => {
     changes: { from: fromLine.from, to },
     selection: EditorSelection.cursor(fromLine.from),
   })
+  return true
+}
+
+// ===== 转到符号（Ctrl/⌘ + Shift + O）=====
+// 行级正则扫描当前文档的函数 / 类 / 方法等定义，跨语言通用；选中后光标跳到该行并居中滚动。
+export interface CodeSymbol {
+  name: string
+  kind: '函数' | '方法' | '类' | '接口' | '类型' | '枚举' | '标题'
+  line: number
+}
+
+/** 方法简写匹配时需排除的控制流关键字（缩进的 `if (…) {` 不能算方法） */
+const METHOD_KEYWORD_EXCLUDE = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'do', 'else', 'try', 'return', 'function', 'with',
+])
+
+/** 扫描文档中的符号定义（上限 500 个防病态文件） */
+export function scanSymbols(doc: string): CodeSymbol[] {
+  const hits: CodeSymbol[] = []
+  const push = (name: string, kind: CodeSymbol['kind'], line: number) => {
+    if (hits.length < 500) hits.push({ name, kind, line })
+  }
+  const lines = doc.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd()
+    const trimmed = line.trim()
+    // 跳过空行与常见注释行（避免把示例代码扫进符号表）
+    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue
+    let m = line.match(/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/)
+    if (m) {
+      push(m[1], '函数', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/))) {
+      push(m[1], '类', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/))) {
+      push(m[1], '接口', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)/))) {
+      push(m[1], '枚举', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*[=<{]/))) {
+      push(m[1], '类型', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:pub\s+)?(?:async\s+)?def\s+([A-Za-z_]\w*)/))) {
+      push(m[1], '函数', i + 1)
+      continue
+    }
+    if ((m = line.match(/^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)/))) {
+      push(m[1], '函数', i + 1)
+      continue
+    }
+    // const/let/var 箭头函数与 function 表达式
+    if (
+      (m = line.match(
+        /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w<>[\]|,\s]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*=>/,
+      )) ||
+      (m = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b/))
+    ) {
+      push(m[1], '函数', i + 1)
+      continue
+    }
+    // 方法简写（缩进的 name(args) {：类 / 对象字面量成员；排除控制流关键字）
+    if (
+      (m = line.match(
+        /^\s+(?:(?:public|private|protected|static|async|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::\s*[\w<>[\]|,\s]+)?\s*\{\s*$/,
+      )) &&
+      !METHOD_KEYWORD_EXCLUDE.has(m[1])
+    ) {
+      push(m[1], '方法', i + 1)
+      continue
+    }
+    // Markdown 标题
+    if ((m = line.match(/^(#{1,6})\s+(\S.*)$/))) {
+      push(m[2].trim(), '标题', i + 1)
+    }
+  }
+  return hits
+}
+
+/** 组件内登记的打开回调（键位命令 / 命令面板桥接用，避免命令直接触碰 React 状态） */
+let openSymbolPickerBridge: (() => void) | null = null
+
+/** 外部入口（page.tsx 命令面板）：打开当前文件的符号跳转对话框 */
+export function triggerSymbolPicker() {
+  openSymbolPickerBridge?.()
+}
+
+const openSymbolCommand: Command = () => {
+  openSymbolPickerBridge?.()
   return true
 }
 
@@ -984,6 +1088,45 @@ export function CodeEditor({
   const [copiedFile, setCopiedFile] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
 
+  // ===== 转到符号对话框（Ctrl/⌘ + Shift + O / 工具栏按钮 / 命令面板）=====
+  const [symbolOpen, setSymbolOpen] = useState(false)
+  const [symbols, setSymbols] = useState<CodeSymbol[]>([])
+  const [symbolQuery, setSymbolQuery] = useState('')
+  const [symbolIndex, setSymbolIndex] = useState(0)
+  const symbolInputRef = useRef<HTMLInputElement | null>(null)
+
+  /** 打开时对当前文档做一次快照扫描（打开期间的编辑不影响本次列表，重开即刷新） */
+  const openSymbolPicker = useCallback(() => {
+    const view = editorViewRef.current
+    if (!view || !fileIdRef.current) return
+    setSymbols(scanSymbols(view.state.doc.sliceString(0, view.state.doc.length)))
+    setSymbolQuery('')
+    setSymbolIndex(0)
+    setSymbolOpen(true)
+    // 等对话框挂载后聚焦搜索框（Radix Dialog 默认聚焦首个可聚焦元素，显式指定更稳）
+    requestAnimationFrame(() => symbolInputRef.current?.focus())
+    // setState 均为稳定引用：显式列出以满足 React Compiler 的 memoization 保留校验，回调实际恒定
+  }, [setSymbols, setSymbolQuery, setSymbolIndex, setSymbolOpen])
+
+  // 登记 / 注销桥接：CM 键位命令与 page.tsx 命令面板经此打开对话框
+  useEffect(() => {
+    openSymbolPickerBridge = openSymbolPicker
+    return () => {
+      if (openSymbolPickerBridge === openSymbolPicker) openSymbolPickerBridge = null
+    }
+  }, [openSymbolPicker])
+
+  const filteredSymbols = useMemo(() => {
+    const q = symbolQuery.trim().toLowerCase()
+    if (!q) return symbols
+    return symbols.filter((s) => s.name.toLowerCase().includes(q))
+  }, [symbols, symbolQuery])
+
+  // 渲染期调整：过滤后索引越界时归零（与 @ 引用下拉同款模式）
+  if (symbolOpen && symbolIndex >= filteredSymbols.length) {
+    setSymbolIndex(0)
+  }
+
   /** 在当前视图上执行编辑操作；预览模式下先切回编辑模式再执行 */
   const runOnEditorView = (fn: (view: EditorView) => void) => {
     if (mdViewRef.current === 'preview') {
@@ -1002,6 +1145,19 @@ export function CodeEditor({
       fn(v)
       v.focus()
     }
+  }
+
+  /** 跳到符号所在行：光标定位 + 居中滚动 + 焦点（预览模式下先切回编辑态） */
+  const jumpToSymbol = (s: CodeSymbol) => {
+    setSymbolOpen(false)
+    runOnEditorView((view) => {
+      const lineNo = Math.min(Math.max(1, s.line), view.state.doc.lines)
+      const lineInfo = view.state.doc.line(lineNo)
+      view.dispatch({
+        selection: EditorSelection.cursor(lineInfo.from),
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+      })
+    })
   }
 
   /** 折叠 / 展开全部代码块（预览模式下编辑器已卸载，此时不动作）；快捷键 Ctrl/⌘ + Alt + [ / ] 由 basicSetup 的 foldKeymap 内置 */
@@ -1092,6 +1248,7 @@ export function CodeEditor({
           { key: 'Shift-Mod-k', run: deleteLines },
           { key: 'Mod-Shift-\\', run: cursorMatchingBracket },
           { key: 'Mod-Shift-|', run: cursorMatchingBracket },
+          { key: 'Mod-Shift-o', run: openSymbolCommand },
         ]),
       ),
       keymap.of(searchKeymap),
@@ -1467,6 +1624,17 @@ export function CodeEditor({
             <Braces className="h-3 w-3" />
           </button>
         )}
+        {/* 转到符号：列出当前文件的函数 / 类 / 方法等定义，键盘 ↑↓ + Enter 快速跳转 */}
+        <button
+          type="button"
+          onClick={openSymbolPicker}
+          title="转到符号（Ctrl/⌘ + Shift + O）"
+          aria-label="转到符号"
+          data-testid="symbol-btn"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        >
+          <SquareFunction className="h-3 w-3" />
+        </button>
         {/* 历史版本：每次内容变更自动快照，可预览 / 对比 / 一键回滚 */}
         <button
           type="button"
@@ -1863,6 +2031,78 @@ export function CodeEditor({
           </button>
         </div>
       )}
+
+      {/* 转到符号对话框：搜索过滤 + ↑↓ 选择 + Enter 跳转 */}
+      <Dialog open={symbolOpen} onOpenChange={setSymbolOpen}>
+        <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle className="font-claude-serif">转到符号</DialogTitle>
+            <DialogDescription>
+              当前文件共 {symbols.length} 个符号 · ↑↓ 选择，Enter 跳转
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            ref={symbolInputRef}
+            value={symbolQuery}
+            onChange={(e) => setSymbolQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSymbolIndex((i) => Math.min(i + 1, filteredSymbols.length - 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSymbolIndex((i) => Math.max(i - 1, 0))
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                const target = filteredSymbols[symbolIndex]
+                if (target) jumpToSymbol(target)
+              }
+            }}
+            placeholder="按名称过滤符号…"
+            className="h-8 text-[13px]"
+            aria-label="过滤符号"
+          />
+          <div className="thin-scrollbar max-h-72 min-h-16 overflow-y-auto rounded-md border border-border p-1">
+            {filteredSymbols.length === 0 ? (
+              <p className="px-2 py-4 text-center text-[12.5px] text-muted-foreground">
+                {symbols.length === 0 ? '未扫描到符号（支持函数 / 类 / 方法 / 接口 / 类型 / 标题）' : '没有匹配的符号'}
+              </p>
+            ) : (
+              filteredSymbols.slice(0, 200).map((s, i) => (
+                <button
+                  key={`${s.line}-${s.name}-${i}`}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                    i === symbolIndex ? 'bg-clay/10 text-clay' : 'text-foreground/85 hover:bg-accent'
+                  }`}
+                  onClick={() => jumpToSymbol(s)}
+                  onMouseEnter={() => setSymbolIndex(i)}
+                >
+                  <span
+                    className={`shrink-0 rounded px-1 py-px text-[10px] ${
+                      i === symbolIndex ? 'bg-clay/15 text-clay' : 'bg-secondary text-muted-foreground'
+                    }`}
+                  >
+                    {s.kind}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono">{s.name}</span>
+                  <span
+                    className={`shrink-0 text-[10.5px] tabular-nums ${
+                      i === symbolIndex ? 'text-clay/80' : 'text-muted-foreground/70'
+                    }`}
+                  >
+                    L{s.line}
+                  </span>
+                </button>
+              ))
+            )}
+            {filteredSymbols.length > 200 && (
+              <p className="px-2 py-1.5 text-center text-[10.5px] text-muted-foreground">
+                仅显示前 200 条，请继续输入缩小范围
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

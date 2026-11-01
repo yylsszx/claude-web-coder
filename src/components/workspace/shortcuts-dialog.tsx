@@ -25,6 +25,7 @@ const SHORTCUT_GROUPS: { group: string; items: { keys: string[]; desc: string }[
       { keys: ['Ctrl/⌘', 'Alt', 'S'], desc: '保存全部未保存文件' },
       { keys: ['Ctrl/⌘', 'Z / ⇧Z'], desc: '编辑器内：撤销 / 重做（也可用工具栏按钮）' },
       { keys: ['Ctrl/⌘', 'G'], desc: '焦点在编辑器：查找下一个；焦点在编辑器外：转到指定行' },
+      { keys: ['Ctrl/⌘', 'Shift', 'O'], desc: '编辑器内：转到符号（函数 / 类 / 方法 / 接口 / 类型 / 标题列表，↑↓ + Enter 跳转）' },
       { keys: ['Ctrl/⌘', 'Alt', '←/→'], desc: '在打开的标签页间循环切换' },
       { keys: ['Alt', '1…9'], desc: '直达第 N 个打开的标签页' },
       { keys: ['Ctrl/⌘', 'Shift', 'T'], desc: '重新打开最近关闭的标签页' },

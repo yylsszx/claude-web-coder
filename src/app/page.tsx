@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History, Archive, Link2 } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History, Archive, Link2, SquareFunction } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -22,7 +22,7 @@ import { copyTextToClipboard } from '@/lib/utils'
 import { setCodeWrapPreference, useCodeWrap } from '@/components/workspace/ai-message'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
-import { CodeEditor, type JumpTarget, type SaveState, type SelectionAction, type SelectionPayload } from '@/components/workspace/code-editor'
+import { CodeEditor, triggerSymbolPicker, type JumpTarget, type SaveState, type SelectionAction, type SelectionPayload } from '@/components/workspace/code-editor'
 import { ChatPanel } from '@/components/workspace/chat-panel'
 import { GlobalSearch } from '@/components/workspace/global-search'
 import { DiffDialog } from '@/components/workspace/diff-dialog'
@@ -2467,6 +2467,19 @@ export default function WorkspacePage() {
               <Hash className="h-4 w-4 text-clay" />
               <span>转到行…</span>
               <span className="ml-auto text-[10px] text-muted-foreground">⌘G</span>
+            </CommandItem>
+          )}
+          {openTabs.length > 0 && (
+            <CommandItem
+              value="转到符号 跳转符号"
+              onSelect={() => {
+                setCmdOpen(false)
+                triggerSymbolPicker()
+              }}
+            >
+              <SquareFunction className="h-4 w-4 text-clay" />
+              <span>转到符号…</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">⌘⇧O</span>
             </CommandItem>
           )}
           <CommandItem

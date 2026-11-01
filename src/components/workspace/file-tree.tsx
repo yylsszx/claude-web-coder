@@ -22,6 +22,7 @@ import {
   Import,
   ListFilter,
   Loader2,
+  LocateFixed,
   MoreVertical,
   Pencil,
   Search,
@@ -350,6 +351,32 @@ export function FileTree({
 
   /** 全部折叠：清空展开记录（localStorage 同步清空，刷新后保持折叠态） */
   const collapseAll = () => writeExpanded(new Set<string>())
+
+  /** 定位当前文件：逐级展开祖先目录（展开集合存带尾斜杠的目录路径），滚动到可见并闪烁高亮 */
+  const revealActiveFile = () => {
+    const active = files.find((f) => f.id === activeId)
+    if (!active) {
+      toast({ title: '当前没有打开的文件' })
+      return
+    }
+    const segs = active.path.split('/')
+    const next = new Set(expanded)
+    for (let i = 1; i < segs.length; i++) next.add(segs.slice(0, i).join('/') + '/')
+    writeExpanded(next)
+    // 略等展开重渲染后再滚动 + 闪烁（与 message-flash 同款动画）
+    window.setTimeout(() => {
+      const el = document.querySelector(`[data-file-id="${CSS.escape(active.id)}"]`) as HTMLElement | null
+      if (!el) {
+        toast({ title: '未在文件树中找到该文件', description: '可能被树内过滤条件隐藏，请先清除过滤' })
+        return
+      }
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.classList.remove('message-flash') // 连续点击时先复位再重播动画
+      void el.offsetWidth
+      el.classList.add('message-flash')
+      window.setTimeout(() => el.classList.remove('message-flash'), 2000)
+    }, 80)
+  }
 
   /** 复制路径到剪贴板（文件路径 / 目录前缀通用，toast 反馈避免无感知） */
   const handleCopyPath = async (path: string) => {
@@ -727,6 +754,17 @@ export function FileTree({
             title={filterActive ? '过滤中不适用折叠' : '全部折叠目录'}
           >
             <ChevronsDownUp className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            disabled={!activeId}
+            onClick={revealActiveFile}
+            aria-label="定位当前文件"
+            title="在文件树中定位当前打开的文件（展开目录并滚动到可见）"
+          >
+            <LocateFixed className="h-4 w-4 text-muted-foreground" />
           </Button>
           <Button
             variant="ghost"

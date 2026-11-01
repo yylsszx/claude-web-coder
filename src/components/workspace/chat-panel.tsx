@@ -306,6 +306,9 @@ export function ChatPanel({
   }
   // 消息级操作：复制反馈 / 内联编辑
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // 引用条状态：记录被引用消息的 id、填充前缀与预览文本；展示条件是「输入框仍以该前缀开头」，
+  // 用户删掉引用文本即自动隐藏（无 effect 监听，纯派生可见性）
+  const [quotedRef, setQuotedRef] = useState<{ id: string; prefix: string; preview: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
   // 单条消息删除两步确认：点一次变「确认删除」，2.5 秒内再点才执行，超时自动还原
@@ -595,6 +598,7 @@ export function ChatPanel({
     writeInputHistory(activeSessionId, hist)
     setInput('')
     setPendingAttachments([])
+    setQuotedRef(null)
     try {
       if (activeSessionId) localStorage.removeItem(`cw-chat-draft-${activeSessionId}`)
     } catch {
@@ -880,9 +884,10 @@ export function ChatPanel({
     }
   }
 
-  /** 引用回复：把该条 AI 回复的摘要以 Markdown 引用格式填入输入框，便于针对性追问 */
-  const quoteMessage = (content: string) => {
-    const lines = content
+  /** 引用回复：把该条 AI 回复的摘要以 Markdown 引用格式填入输入框，便于针对性追问；
+   *  同时记录引用源（id + 前缀 + 预览），输入框上方显示引用条，点击可定位回原消息 */
+  const quoteMessage = (msg: ChatMsg) => {
+    const lines = msg.content
       .split('\n')
       .map((l) => l.replace(/^[\s#>*`\-|]+/, '').trim()) // 剥掉标题 / 列表 / 引用等 Markdown 前缀
       .filter(Boolean)
@@ -892,6 +897,7 @@ export function ChatPanel({
     const quoted = lines.map((l) => '> ' + l).join('\n') + '\n\n'
     histIndexRef.current = null // 退出输入历史浏览态，转入正常草稿编辑
     setInput((prev) => (prev.startsWith(quoted) ? prev : quoted + prev))
+    setQuotedRef({ id: msg.id, prefix: quoted, preview: lines.join(' ') })
     // 受控值渲染后聚焦并把光标移到末尾，直接继续输入
     requestAnimationFrame(() => {
       const el = textareaRef.current
@@ -900,6 +906,17 @@ export function ChatPanel({
       const end = el.value.length
       el.setSelectionRange(end, end)
     })
+  }
+
+  /** 移除引用条：同时从输入框里剥掉引用前缀（与 quoteMessage 的填充互逆），同步草稿 */
+  const removeQuotedRef = () => {
+    if (!quotedRef) return
+    setInput((prev) => {
+      const next = prev.startsWith(quotedRef.prefix) ? prev.slice(quotedRef.prefix.length) : prev
+      persistDraft(next)
+      return next
+    })
+    setQuotedRef(null)
   }
 
   /** 开始编辑用户消息 */
@@ -1661,8 +1678,8 @@ export function ChatPanel({
                 </button>
                 <button
                   className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
-                  onClick={() => quoteMessage(msg.content)}
-                  title="引用此回复到输入框，便于针对性追问"
+                  onClick={() => quoteMessage(msg)}
+                  title="引用此回复到输入框（输入框上方引用条可点击跳回原文）"
                 >
                   <Quote className="h-3 w-3" />
                   引用
@@ -1864,6 +1881,28 @@ export function ChatPanel({
               <span className="shrink-0 text-[10.5px] text-muted-foreground">
                 {fileAttached ? 'AI 将读取该文件' : '已移除，AI 看不到该文件'}
               </span>
+            </div>
+          )}
+          {/* 引用条：点击定位回被引用的消息，× 移除（同时剥掉输入框里的引用前缀）；
+              展示条件为输入框仍以引用前缀开头，手动删掉引用文本即自动隐藏 */}
+          {quotedRef && input.startsWith(quotedRef.prefix) && (
+            <div className="flex items-center gap-1.5 px-3 pt-2.5">
+              <button
+                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-clay/40 bg-clay/10 px-1.5 py-0.5 text-[11px] text-clay transition-colors hover:bg-clay/20"
+                onClick={() => jumpToMessage(quotedRef.id)}
+                title="点击定位到被引用的消息"
+              >
+                <Quote className="h-3 w-3 shrink-0" />
+                <span className="truncate">{quotedRef.preview}</span>
+              </button>
+              <button
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="移除引用（同时从输入框删掉引用文本）"
+                aria-label="移除引用"
+                onClick={removeQuotedRef}
+              >
+                <X className="h-3 w-3" />
+              </button>
             </div>
           )}
           {mentions.length > 0 && (
