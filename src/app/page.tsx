@@ -741,6 +741,22 @@ export default function WorkspacePage() {
     [scheduleSave]
   )
 
+  /** 按路径拉取工作区文件内容（HTML 预览内联本地 CSS/JS 用）：已打开标签优先返回实时内容，未打开的查列表拿 id 再拉取 */
+  const resolvePreviewFile = useCallback(async (path: string): Promise<string | null> => {
+    const open = openTabsRef.current.find((t) => t.path === path)
+    if (open) return open.content
+    const meta = filesRef.current.find((f) => f.path === path)
+    if (!meta) return null
+    try {
+      const res = await fetch(`/api/files/${meta.id}`)
+      if (!res.ok) return null
+      const data = await res.json()
+      return typeof data.file?.content === 'string' ? data.file.content : null
+    } catch {
+      return null
+    }
+  }, [])
+
   const createFile = useCallback(
     async (path: string): Promise<boolean> => {
       try {
@@ -1970,6 +1986,7 @@ export default function WorkspacePage() {
         }
         void saveTab(tab.id)
       }}
+      resolvePreviewFile={resolvePreviewFile}
     />
   )
 

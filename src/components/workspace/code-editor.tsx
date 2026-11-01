@@ -15,6 +15,7 @@ import { EditorView, keymap } from '@codemirror/view'
 import type { Command, ViewUpdate } from '@codemirror/view'
 import { EditorSelection, Prec } from '@codemirror/state'
 import { cursorMatchingBracket, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { foldAll, unfoldAll } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -29,6 +30,8 @@ import {
   BookOpen,
   Braces,
   Check,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CloudUpload,
   Code,
   Columns2,
@@ -71,6 +74,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
+import { HtmlPreviewFrame } from '@/components/workspace/html-preview'
 import type { FileFull, FileMeta } from '@/lib/types'
 
 const LANGUAGE_EXTENSIONS: Record<string, () => Extension> = {
@@ -340,6 +344,8 @@ interface CodeEditorProps {
   onOpenGoto?: () => void
   /** 打开当前文件的历史版本对话框（对话框在页面层，未打开文件也可从文件树右键进入） */
   onOpenHistory: () => void
+  /** 按需拉取工作区文件内容（路径 → 内容；HTML 预览内联本地 CSS/JS 时用，null 表示不存在） */
+  resolvePreviewFile?: (path: string) => Promise<string | null>
 }
 
 export function CodeEditor({
@@ -368,6 +374,7 @@ export function CodeEditor({
   onGlobalSearch,
   onOpenGoto,
   onOpenHistory,
+  resolvePreviewFile,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const { toast } = useToast()
@@ -390,6 +397,12 @@ export function CodeEditor({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   // 编辑器显示偏好：自动换行 / 字号（localStorage 外部存储，刷新后保持；SSR 快照给默认值避免 hydration 不一致）
   const prefs = useEditorPrefs()
+  // 已打开标签的实时内容 map（含未保存修改）：HTML 预览内联本地引用时优先取用
+  // （必须在早退空态分支之前调用，避免条件 hooks）
+  const openFilesMap = useMemo(
+    () => Object.fromEntries(tabs.map((t) => [t.path, t.content])),
+    [tabs]
+  )
   const toggleWrap = useCallback(() => {
     writeEditorPrefs({ wrap: !readEditorPrefs().wrap })
   }, [])
@@ -723,6 +736,20 @@ export function CodeEditor({
     }
   }
 
+  /** 折叠 / 展开全部代码块（预览模式下编辑器已卸载，此时不动作）；快捷键 Ctrl/⌘ + Alt + [ / ] 由 basicSetup 的 foldKeymap 内置 */
+  const foldAllLines = () => {
+    const v = editorViewRef.current
+    if (!v) return
+    foldAll(v)
+    v.focus()
+  }
+  const unfoldAllLines = () => {
+    const v = editorViewRef.current
+    if (!v) return
+    unfoldAll(v)
+    v.focus()
+  }
+
   /** 包裹语法（加粗 / 斜体 / 行内代码）：有选区则包裹并保持选中，无选区插入占位文本并选中便于直接覆盖 */
   const mdWrap = (before: string, after: string, placeholder: string) =>
     runOnEditorView((view) => {
@@ -895,8 +922,11 @@ export function CodeEditor({
   const SaveIcon = saveIndicator.icon
 
   const isMd = file.language === 'markdown'
-  const showEditor = !isMd || mdView !== 'preview'
-  const showPreview = isMd && mdView !== 'edit'
+  const isHtml = /\.html?$/i.test(file.path)
+  // Markdown 预览用富文本渲染，HTML 预览用沙箱 iframe（内联本地 CSS/JS）；两者共用三态切换
+  const canPreview = isMd || isHtml
+  const showEditor = !canPreview || mdView !== 'preview'
+  const showPreview = canPreview && mdView !== 'edit'
 
   // 浮动工具条定位：优先显示在选区上方，空间不足时放下方，并限制在视口内
   const toolbarLeft = Math.min(Math.max(selState?.x ?? 0, 8), window.innerWidth - 300)
@@ -1172,6 +1202,30 @@ export function CodeEditor({
             <WrapText className="h-3 w-3" />
           </button>
         </div>
+        {showEditor && (
+          <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
+            <button
+              type="button"
+              onClick={foldAllLines}
+              disabled={!cursorInfo}
+              title="折叠全部代码块（Ctrl/⌘ + Alt + [）"
+              aria-label="折叠全部"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronsDownUp className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={unfoldAllLines}
+              disabled={!cursorInfo}
+              title="展开全部代码块（Ctrl/⌘ + Alt + ]）"
+              aria-label="展开全部"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronsUpDown className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {isMd && mdView !== 'preview' && (
           <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
             <button
@@ -1221,7 +1275,7 @@ export function CodeEditor({
             </button>
           </div>
         )}
-        {isMd && (
+        {canPreview && (
           <div className="flex shrink-0 items-center rounded-md border border-border bg-secondary/60 p-0.5">
             {MD_VIEW_OPTIONS.map(({ value, label, icon: Icon }) => (
               <button
@@ -1367,11 +1421,20 @@ export function CodeEditor({
         {showPreview && (
           <>
             <div className="w-px shrink-0 bg-border" />
-            <div className="thin-scrollbar min-w-0 flex-1 overflow-auto bg-card">
-              <div className="markdown-preview mx-auto max-w-3xl px-6 py-5">
-                <AiMessage content={file.content} />
+            {isMd ? (
+              <div className="thin-scrollbar min-w-0 flex-1 overflow-auto bg-card">
+                <div className="markdown-preview mx-auto max-w-3xl px-6 py-5">
+                  <AiMessage content={file.content} />
+                </div>
               </div>
-            </div>
+            ) : (
+              <HtmlPreviewFrame
+                path={file.path}
+                content={file.content}
+                openFiles={openFilesMap}
+                resolveFile={resolvePreviewFile ?? (async () => null)}
+              />
+            )}
           </>
         )}
       </div>
