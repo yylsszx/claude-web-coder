@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History, Archive } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History, Archive, Link2 } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { ToastAction } from '@/components/ui/toast'
 import { useToast } from '@/hooks/use-toast'
+import { copyTextToClipboard } from '@/lib/utils'
 import { setCodeWrapPreference, useCodeWrap } from '@/components/workspace/ai-message'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FileTree } from '@/components/workspace/file-tree'
@@ -2343,6 +2344,24 @@ export default function WorkspacePage() {
           >
             <History className="h-4 w-4 text-clay" />
             <span>查看当前文件历史版本</span>
+          </CommandItem>
+          <CommandItem
+            value="复制当前文件路径 link 相对路径"
+            onSelect={() => {
+              setCmdOpen(false)
+              const tab = activeTabRef.current
+              if (!tab) return
+              void copyTextToClipboard(tab.path).then((ok) => {
+                toast({
+                  title: ok ? '已复制文件路径' : '复制失败',
+                  description: ok ? tab.path : undefined,
+                })
+              })
+            }}
+            disabled={!activeTab}
+          >
+            <Link2 className="h-4 w-4 text-clay" />
+            <span>复制当前文件路径</span>
           </CommandItem>
           <CommandItem
             value="备份全部会话 导出会话 ZIP"

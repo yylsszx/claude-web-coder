@@ -1,3 +1,11 @@
+## [0.64.0] - 2026-11-01
+- **全局搜索结果关键词高亮 + 键盘导航**：搜索对话框内所有命中文本（文件命中行 / 文件路径 / 会话标题 / 消息摘要）按关键词大小写不敏感切段，命中段以 clay 底色 `<mark>` 标出一眼可辨；新增 ↑↓ 键在结果条目间移动（clay 底色活动行 + `scrollIntoView({block:'nearest'})` 自动滚动）、Enter 直接打开当前项（文件跳行 / 消息定位，与点击同链路），输入框占位符注明「↑↓ 选择，Enter 打开」；条目序号用 `idxMap`（行键 → 扁平序号）预计算对齐渲染顺序，避免渲染期突变；实测：搜索 zeta-qx9 全对话框恰好 3 处 mark（文件 2 行 + 消息 1 条）且文本精确、初始活动行 idx0 clay 底色、ArrowDown/Up 双向移动正确、Enter 关闭对话框并跳到命中行（.cm-activeLine 含关键词）
+- **Ctrl/⌘+F 自动带入选中文本**：编辑器内选区非空（单行且 ≤200 字符）按 Ctrl/⌘+F，查找面板自动预填选中文本并异步应用查询（立即高亮 + 实时计数），与 VS Code 行为一致；多行 / 超长选区跳过预填普通打开；实测：双击选中 first → Ctrl+F 面板输入值 first、计数「1 处」、.cm-searchMatch 高亮 ≥1
+- **复制当前文件路径**：状态栏新增 Link2 图标按钮（复制内容按钮旁，点击后 1.5s 变绿色对勾），复制工作区相对路径到剪贴板；命令面板新增「复制当前文件路径」操作项（搜索词含「link 相对路径」别名，无打开文件时禁用），成功 toast 带路径预览；实测：状态栏点击后 `navigator.clipboard.readText()` 精确等于文件路径、命令面板路径 + toast 全通过
+- 修复过程中的关键教训：①**CM6 更新周期内禁止嵌套 dispatch**——Ctrl+F 预填初版在 keymap 命令与 panel mount 里直接 `view.dispatch(setSearchQuery)`，触发 "Calls to EditorView.update are not allowed while an update is in progress"，面板创建整体失败（命令链中断）；正确姿势：命令只改模块级状态，mount 里 `window.setTimeout(0)` 异步一拍再派发应用；②**CM6 选区不能用 `window.getSelection()` 探测**（CM6 用隐藏原生选区，DOM selection 恒为空），断言选区应查 `.cm-selectionBackground` 元素；③e2e 双击选词必须给 `position={x,y}` 且落在词上（.cm-line 整行块元素默认点中央空白，0.62 同款教训二次确认）
+- 测试数据用后即清：e2etest/zeta-file.txt DELETE、注入消息（id/content 前缀 e2e64- / zeta-qx9）删除，复查 0 残留
+- ESLint 0 错误 0 警告；src 目录 tsc 无类型错误；build 通过
+
 ## [0.63.0] - 2026-11-01
 - **编辑器查找替换面板中文化**：`search()` 换用自定义 `createPanel` 重绘默认英文面板——两行布局（查找行：输入框 + 实时匹配计数 + 上一个 / 下一个 + 三个开关 + 关闭；替换行：替换输入 + 替换 / 全部替换），全部功能对齐默认面板且键位不变（Ctrl/⌘+F 打开、Enter / Shift+Enter 上下导航、Esc 关闭）；三个开关「Aa 区分大小写 / .* 正则 / 整词」clay 高亮态（`data-on` 属性 + globals.css 规则，避开 Tailwind important 类冲突），计数用与查询同规则的正则扫描全文（上限 999 显示「999+ 处」，非法正则红字「正则无效」，零宽匹配 lastIndex 推进防死循环）；替换行支持正则 $1 引用、全部替换走撤销栈；搜索高亮色从默认黄统一为 clay 系（.cm-searchMatch）；上次查询/替换与开关状态记在模块级变量，重开面板回填；实测：Ctrl+F 打开中文面板、alpha 计数 5 处（不区分大小写）→ 整词 4 处（排除 alphabetic）→ 区分大小写 3 处（排除 Alpha）、aria-pressed 同步、无结果 / 非法正则提示、全部替换结果精确（Alpha 与 alphabetic 保留）且 1s 自动保存落库、Esc 卸载 + 重开回填
 - **输入区拖拽图片上传**：把图片文件直接拖到对话输入框即加入待发送附件——dragenter 深度计数高亮（容器 clay 描边 + 环），drop 复用与粘贴同一条 `addImageFiles` 压缩管线（超 4 张截断提示、逐张压缩、占位 Loader），混拖时非图片部分自动过滤；拖入 .json/.zip 备份文件时 toast 指引「备份文件请拖到顶部标题栏导入」，其余非图片文件静默阻断浏览器默认打开行为（此前拖图片到输入区会整页跳转打开文件）；实测：DataTransfer 注入 1×1 PNG → 高亮容器 → 「1/4 张图片将随消息发送」+ 缩略图渲染 → 移除清空；.json 拖入 toast 提示且不进附件区

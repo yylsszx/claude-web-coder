@@ -20,6 +20,7 @@ import {
   closeSearchPanel,
   findNext,
   findPrevious,
+  openSearchPanel,
   replaceAll,
   replaceNext,
   search,
@@ -329,11 +330,33 @@ function createCnSearchPanel(view: EditorView): Panel {
       updateCount()
       queryInput.focus()
       queryInput.select()
+      // 外部预填了查询（如 Ctrl/⌘+F 带入选中文本）：mount 处于 view 更新周期内，
+      // 嵌套 dispatch 会抛 "update is in progress"，故异步一拍再应用高亮与计数
+      if (st.text) {
+        window.setTimeout(() => {
+          applyToState(false)
+          queryInput.focus()
+          queryInput.select()
+        }, 0)
+      }
     },
     update(u: ViewUpdate) {
       if (u.docChanged || u.selectionSet) updateCount()
     },
   }
+}
+
+/** Ctrl/⌘ + F：选区非空（单行且 ≤200 字）时预填进查找面板并立即高亮（VS Code 同款），否则普通打开。
+ *  仅改模块状态 + 打开面板，不在命令内 dispatch（panel mount 会异步应用查询） */
+const openSearchWithSelection: Command = (view) => {
+  const sel = view.state.selection.main
+  if (!sel.empty) {
+    const text = view.state.sliceDoc(sel.from, sel.to)
+    if (text && text.length <= 200 && !text.includes('\n')) {
+      searchPanelState.text = text
+    }
+  }
+  return openSearchPanel(view)
 }
 
 /** 固定标签空列表：props 未传时复用同一引用，避免每渲染新分配破坏编译器 memoization */
@@ -959,6 +982,7 @@ export function CodeEditor({
 
   // ===== Markdown 快捷格式化与复制全文 =====
   const [copiedFile, setCopiedFile] = useState(false)
+  const [copiedPath, setCopiedPath] = useState(false)
 
   /** 在当前视图上执行编辑操作；预览模式下先切回编辑模式再执行 */
   const runOnEditorView = (fn: (view: EditorView) => void) => {
@@ -1061,6 +1085,7 @@ export function CodeEditor({
       search({ createPanel: createCnSearchPanel }),
       Prec.high(
         keymap.of([
+          { key: 'Mod-f', run: openSearchWithSelection },
           { key: 'Mod-d', run: duplicateSelection },
           { key: 'Alt-ArrowUp', run: moveLinesUp },
           { key: 'Alt-ArrowDown', run: moveLinesDown },
@@ -1615,6 +1640,23 @@ export function CodeEditor({
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
         >
           {copiedFile ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!file) return
+            void copyTextToClipboard(file.path).then((ok) => {
+              if (ok) {
+                setCopiedPath(true)
+                setTimeout(() => setCopiedPath(false), 1500)
+              }
+            })
+          }}
+          title="复制文件路径（工作区相对路径）"
+          aria-label="复制文件路径"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+        >
+          {copiedPath ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Link2 className="h-3.5 w-3.5" />}
         </button>
         <Button
           size="sm"
