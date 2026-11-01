@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ChevronsDownUp,
   ChevronDown,
@@ -10,6 +10,7 @@ import {
   FileText,
   FileJson,
   FilePlus2,
+  FolderInput,
   FolderPlus,
   FolderOpen,
   Import,
@@ -176,8 +177,10 @@ interface FileTreeProps {
   /** 拖拽移动目录到另一目录（批量改前缀走 move-dir 端点；targetPath 为 '' 表示移到根） */
   onMoveDir?: (dirPath: string, targetPath: string) => Promise<boolean>
   onQuickOpen: () => void
-  /** 拖拽本地文件到文件树导入工作区 */
+  /** 拖拽本地文件到文件树导入工作区（.zip 会路由到压缩包导入端点） */
   onImportFiles: (dropped: File[]) => void
+  /** 从本地选择 ZIP 压缩包导入（服务端解包建文件） */
+  onImportZip: (file: File) => void
   importingFiles: boolean
 }
 
@@ -194,11 +197,14 @@ export function FileTree({
   onMoveDir,
   onQuickOpen,
   onImportFiles,
+  onImportZip,
   importingFiles,
 }: FileTreeProps) {
   const { toast } = useToast()
   // 目录展开状态：localStorage 外部存储，刷新后保持；SSR 渲染空快照避免 hydration 不一致
   const expanded = useSyncExternalStore(subscribeExpanded, readExpanded, () => EMPTY_FOLDERS)
+  // 「导入 ZIP」隐藏 file input（点击工具栏图标触发）
+  const zipInputRef = useRef<HTMLInputElement | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   // 新建对话框模式：file = 新建文件（自动打开标签）；folder = 新建文件夹（提交时补 .gitkeep）
   const [createMode, setCreateMode] = useState<'file' | 'folder'>('file')
@@ -588,6 +594,28 @@ export function FileTree({
           >
             <FolderPlus className="h-4 w-4 text-muted-foreground" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => zipInputRef.current?.click()}
+            aria-label="导入 ZIP"
+            title="导入 ZIP 压缩包（服务端解包，文本文件入工作区）"
+          >
+            <FolderInput className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <input
+            ref={zipInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) onImportZip(f)
+              // 同一文件可重复导入：清空 value 使 change 事件可再触发
+              e.target.value = ''
+            }}
+          />
         </div>
       </div>
 

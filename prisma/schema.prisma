@@ -9,12 +9,27 @@ datasource db {
 
 // 工作区文件（虚拟项目文件树）
 model ProjectFile {
-  id        String   @id @default(cuid())
-  path      String   @unique // 相对路径，如 "src/utils/helpers.ts"
-  content   String   @default("")
-  language  String   @default("plaintext")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String        @id @default(cuid())
+  path      String        @unique // 相对路径，如 "src/utils/helpers.ts"
+  content   String        @default("")
+  language  String        @default("plaintext")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  versions  FileVersion[] // 历史快照（每次内容变更落库，上限 50 条）
+}
+
+// 文件历史快照：每次内容变更（手动保存 / AI 应用 / 回滚）后记录新状态，可回滚
+model FileVersion {
+  id        String      @id @default(cuid())
+  fileId    String
+  file      ProjectFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  content   String
+  // "manual" 手动保存 | "ai" AI 应用代码 | "rollback" 回滚（含撤销应用）
+  source    String      @default("manual")
+  size      Int         @default(0) // 字节数（UTF-8）
+  createdAt DateTime    @default(now())
+
+  @@index([fileId, createdAt])
 }
 
 // AI 对话会话

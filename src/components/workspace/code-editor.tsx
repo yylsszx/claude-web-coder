@@ -36,6 +36,7 @@ import {
   Download,
   FileCode2,
   Heading2,
+  History,
   Italic,
   Keyboard,
   Link2,
@@ -70,6 +71,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
+import { VersionHistoryDialog } from '@/components/workspace/version-history-dialog'
 import type { FileFull, FileMeta } from '@/lib/types'
 
 const LANGUAGE_EXTENSIONS: Record<string, () => Extension> = {
@@ -337,6 +339,8 @@ interface CodeEditorProps {
   onGlobalSearch?: () => void
   /** 状态栏「行，列」点击回调：打开转到行对话框（未传时渲染纯文本） */
   onOpenGoto?: () => void
+  /** 历史版本回滚：写入快照内容（source=rollback）并同步编辑器，返回是否成功 */
+  onRollback: (fileId: string, content: string) => Promise<boolean>
 }
 
 export function CodeEditor({
@@ -364,6 +368,7 @@ export function CodeEditor({
   onQuickOpen,
   onGlobalSearch,
   onOpenGoto,
+  onRollback,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const { toast } = useToast()
@@ -455,6 +460,9 @@ export function CodeEditor({
     setSelState(null)
     setMdView('edit')
   }
+
+  /** 历史版本对话框（每次内容变更自动快照，可预览与回滚） */
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   // 跳转到指定行（全局搜索命中后调用）：光标定位 + 居中滚动 + 焦点
   useEffect(() => {
@@ -1113,6 +1121,17 @@ export function CodeEditor({
             <Braces className="h-3 w-3" />
           </button>
         )}
+        {/* 历史版本：每次内容变更自动快照，可预览与一键回滚 */}
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          title="历史版本（保存 / AI 应用自动快照，可回滚）"
+          aria-label="历史版本"
+          data-testid="history-btn"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        >
+          <History className="h-3 w-3" />
+        </button>
         {/* 显示偏好：字号调节 + 自动换行开关 */}
         <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/60 p-0.5">
           <button
@@ -1437,6 +1456,18 @@ export function CodeEditor({
             <X className="h-3 w-3" />
           </button>
         </div>
+      )}
+
+      {/* 历史版本对话框 */}
+      {file && (
+        <VersionHistoryDialog
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          fileId={file.id}
+          filePath={file.path}
+          currentContent={file.content}
+          onRollback={onRollback}
+        />
       )}
     </div>
   )

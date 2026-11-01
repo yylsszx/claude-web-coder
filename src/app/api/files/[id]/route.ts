@@ -19,7 +19,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 }
 
-/** PUT /api/files/[id] —— 更新内容或重命名 */
+/** 快照来源白名单：manual 手动保存 | ai AI 应用代码 | rollback 回滚 / 撤销应用 */
+const SNAPSHOT_SOURCES = new Set(['manual', 'ai', 'rollback'])
+/** 每个文件保留的历史快照上限，超出时按时间删最旧 */
+const MAX_VERSIONS_PER_FILE = 50
+
+/**
+ * PUT /api/files/[id] —— 更新内容或重命名。
+ * 内容发生实际变化时自动落一条历史快照（FileVersion，记录新状态与来源），
+ * 「更新 + 快照」在同一事务内原子生效；重命名 / 重复保存（内容未变）不产生快照。
+ */
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
@@ -48,6 +57,35 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         data.path = normalized
         data.language = inferLanguage(normalized)
       }
+    }
+
+    // 内容无实际变化（重命名 / 重复保存）不产生快照
+    const contentChanged =
+      typeof data.content === 'string' && data.content !== existing.content
+    const source =
+      typeof body.source === 'string' && SNAPSHOT_SOURCES.has(body.source)
+        ? body.source
+        : 'manual'
+
+    if (contentChanged) {
+      const size = Buffer.byteLength(data.content as string, 'utf8')
+      const [, file] = await db.$transaction([
+        db.fileVersion.create({
+          data: { fileId: id, content: data.content as string, source, size },
+        }),
+        db.projectFile.update({ where: { id }, data }),
+      ])
+      // 清理超出上限的旧快照（按时间保留最近 50 条）
+      const old = await db.fileVersion.findMany({
+        where: { fileId: id },
+        orderBy: { createdAt: 'desc' },
+        skip: MAX_VERSIONS_PER_FILE,
+        select: { id: true },
+      })
+      if (old.length > 0) {
+        await db.fileVersion.deleteMany({ where: { id: { in: old.map((v) => v.id) } } })
+      }
+      return NextResponse.json({ file })
     }
 
     const file = await db.projectFile.update({ where: { id }, data })

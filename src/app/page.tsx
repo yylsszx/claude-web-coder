@@ -417,8 +417,13 @@ export default function WorkspacePage() {
   }, [isMobile])
 
   // ===== 保存 =====
+  /** source 随保存传入服务端生成对应来源的历史快照：默认 manual 手动保存 | ai AI 应用 | rollback 回滚 */
   const saveTab = useCallback(
-    async (tabId: string, contentOverride?: string): Promise<boolean> => {
+    async (
+      tabId: string,
+      contentOverride?: string,
+      source?: 'manual' | 'ai' | 'rollback'
+    ): Promise<boolean> => {
       const tab = openTabsRef.current.find((t) => t.id === tabId)
       if (!tab) return false
       const content = contentOverride ?? tab.content
@@ -427,7 +432,7 @@ export default function WorkspacePage() {
         const res = await fetch(`/api/files/${tabId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify(source ? { content, source } : { content }),
         })
         if (!res.ok) {
           const data = await res.json()
@@ -477,9 +482,16 @@ export default function WorkspacePage() {
   }, [saveTab, tabStates, toast])
 
   const scheduleSave = useCallback(
-    (tabId: string, content: string) => {
+    (
+      tabId: string,
+      content: string,
+      source?: 'manual' | 'ai' | 'rollback'
+    ) => {
       if (saveTimersRef.current[tabId]) clearTimeout(saveTimersRef.current[tabId])
-      saveTimersRef.current[tabId] = setTimeout(() => void saveTab(tabId, content), 1000)
+      saveTimersRef.current[tabId] = setTimeout(
+        () => void saveTab(tabId, content, source),
+        1000
+      )
     },
     [saveTab]
   )
@@ -1258,7 +1270,7 @@ export default function WorkspacePage() {
         return prev.map((t) => (t.id === target.id ? { ...t, content: code } : t))
       })
       setTabStates((prev) => ({ ...prev, [target.id]: 'dirty' }))
-      scheduleSave(target.id, code)
+      scheduleSave(target.id, code, 'ai')
       setActiveTabId(target.id)
       setLastApplyTargetId(target.id)
       toast({
@@ -1276,7 +1288,7 @@ export default function WorkspacePage() {
                 prev.map((t) => (t.id === snap.fileId ? { ...t, content: snap.prevContent } : t))
               )
               setTabStates((prev) => ({ ...prev, [snap.fileId]: 'dirty' }))
-              scheduleSave(snap.fileId, snap.prevContent)
+              scheduleSave(snap.fileId, snap.prevContent, 'rollback')
               toast({ title: '已撤销', description: '文件已恢复为应用前的内容' })
             }}
           >
@@ -1287,6 +1299,41 @@ export default function WorkspacePage() {
       })
     },
     [scheduleSave, toast]
+  )
+
+  /** 历史版本回滚：把快照内容写回文件（source=rollback，服务端再落一条回滚快照），并同步打开的标签与编辑器 */
+  const rollbackFile = useCallback(
+    async (fileId: string, content: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/files/${fileId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, source: 'rollback' }),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error ?? '回滚失败')
+        }
+        setOpenTabs((prev) =>
+          prev.map((t) => (t.id === fileId ? { ...t, content } : t))
+        )
+        setTabStates((prev) => ({ ...prev, [fileId]: 'saved' }))
+        // 待执行的自动保存会以旧内容覆盖回滚结果，必须取消
+        if (saveTimersRef.current[fileId]) {
+          clearTimeout(saveTimersRef.current[fileId])
+          delete saveTimersRef.current[fileId]
+        }
+        return true
+      } catch (error) {
+        toast({
+          title: '回滚失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+        return false
+      }
+    },
+    [toast]
   )
 
   /** 点击「应用到文件…」→ 打开目标选择对话框 */
@@ -1647,6 +1694,50 @@ export default function WorkspacePage() {
     [refreshFiles, toast]
   )
 
+  /** 导入 ZIP 压缩包：服务端解包（文本文件入工作区，二进制 / 冲突 / 超限跳过），与导出 ZIP 闭环 */
+  const importZip = useCallback(
+    async (file: File) => {
+      setImportingFiles(true)
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const res = await fetch('/api/files/import-zip', { method: 'POST', body: form })
+        const data = await res.json()
+        await refreshFiles()
+        if (!res.ok) {
+          const skipped =
+            [
+              data.skippedBinary ? `二进制 ${data.skippedBinary}` : '',
+              data.skippedConflict ? `冲突 ${data.skippedConflict}` : '',
+              data.skippedOversize ? `超大 ${data.skippedOversize}` : '',
+            ]
+              .filter(Boolean)
+              .join('、') || ''
+          toast({
+            title: '导入 ZIP 失败',
+            description: (data.error ?? '请稍后重试') + (skipped ? `（${skipped}）` : ''),
+            variant: 'destructive',
+          })
+          return
+        }
+        const skippedParts = [
+          data.skippedBinary ? `二进制 ${data.skippedBinary} 个` : '',
+          data.skippedConflict ? `冲突 ${data.skippedConflict} 个` : '',
+          data.skippedOversize ? `超过 512KB ${data.skippedOversize} 个` : '',
+        ].filter(Boolean)
+        toast({
+          title: `已从 ZIP 导入 ${data.created} 个文件`,
+          description: skippedParts.length ? `跳过：${skippedParts.join('、')}` : undefined,
+        })
+      } catch {
+        toast({ title: '导入 ZIP 失败', description: '请稍后重试', variant: 'destructive' })
+      } finally {
+        setImportingFiles(false)
+      }
+    },
+    [refreshFiles, toast]
+  )
+
   /** 注册编辑器插入函数（稳定标识，CodeEditor 挂载后调用） */
   const registerEditorInsert = useCallback((fn: (text: string) => void) => {
     insertToEditorRef.current = fn
@@ -1702,7 +1793,14 @@ export default function WorkspacePage() {
       onMoveFile={moveFile}
       onMoveDir={moveDir}
       onQuickOpen={() => setQuickOpen(true)}
-      onImportFiles={(dropped) => void importDroppedFiles(dropped)}
+      onImportFiles={(dropped) => {
+        // .zip 走压缩包导入端点，其余散文件走原导入链路
+        const zips = dropped.filter((f) => /\.zip$/i.test(f.name))
+        const rest = dropped.filter((f) => !/\.zip$/i.test(f.name))
+        zips.forEach((z) => void importZip(z))
+        if (rest.length) void importDroppedFiles(rest)
+      }}
+      onImportZip={(f) => void importZip(f)}
       importingFiles={importingFiles}
     />
   )
@@ -1748,6 +1846,7 @@ export default function WorkspacePage() {
         setGotoValue('')
         setGotoOpen(true)
       }}
+      onRollback={rollbackFile}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
