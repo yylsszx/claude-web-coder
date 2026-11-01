@@ -40,6 +40,7 @@ import {
   Keyboard,
   Link2,
   Minus,
+  MoreHorizontal,
   Pencil,
   PencilLine,
   Plus,
@@ -62,6 +63,12 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
 import type { FileFull, FileMeta } from '@/lib/types'
 
@@ -894,9 +901,10 @@ export function CodeEditor({
 
   return (
     <div className="flex h-full flex-col">
-      {/* 标签栏 */}
+      {/* 标签栏（外层容纳固定右侧的溢出下拉按钮，内层横向滚动） */}
       {tabs.length > 0 && (
-        <div ref={tabStripRef} className="thin-scrollbar flex h-9 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border bg-secondary/50 px-1.5 pt-1.5">
+        <div className="flex h-9 shrink-0 items-stretch border-b border-border bg-secondary/50 px-1.5 pt-1.5">
+          <div ref={tabStripRef} className="thin-scrollbar flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
           {tabs.map((tab, idx) => {
             const isActive = tab.id === activeId
             const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
@@ -1002,6 +1010,45 @@ export function CodeEditor({
               </ContextMenu>
             )
           })}
+          </div>
+          {/* 标签总览：标签较多时（>5）固定右侧下拉，点击切换（含未保存点与当前高亮） */}
+          {tabs.length > 5 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="ml-0.5 flex shrink-0 items-center self-start rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                  title={`全部标签（${tabs.length} 个）`}
+                  aria-label={`全部标签（${tabs.length} 个）`}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-72 w-56 overflow-y-auto">
+                {tabs.map((tab) => {
+                  const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
+                  const name = tab.path.split('/').pop() || tab.path
+                  return (
+                    <DropdownMenuItem
+                      key={tab.id}
+                      onSelect={() => onSwitchTab(tab.id)}
+                      className={tab.id === activeId ? 'bg-clay/10 text-clay' : undefined}
+                    >
+                      <span className="min-w-0 flex-1 truncate" title={tab.path}>
+                        {name}
+                      </span>
+                      {isDirty && (
+                        <span
+                          className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-clay"
+                          title="未保存"
+                        />
+                      )}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       )}
 

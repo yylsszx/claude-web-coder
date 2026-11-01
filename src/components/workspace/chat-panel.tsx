@@ -215,6 +215,9 @@ export function ChatPanel({
   const [sessionFilter, setSessionFilter] = useState('')
   // 会话下拉行内重命名：点「重命名」铅笔后标题变输入框（Enter 保存 / Esc 或失焦取消），不再弹窗
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
+  // 拖拽 .json 备份到聊天头部导入：dragover 高亮提示（离开 / 松开复位）
+  const [dragOverHeader, setDragOverHeader] = useState(false)
+  const dragDepthRef = useRef(0)
   const [inlineRenameValue, setInlineRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
   // 消息级操作：复制反馈 / 内联编辑
@@ -832,7 +835,42 @@ export function ChatPanel({
   return (
     <div ref={panelRef} className="flex h-full flex-col">
       {/* 头部：会话切换器 */}
-      <div className="flex items-center gap-1.5 border-b border-border bg-card px-3 py-2">
+      <div
+        className={`flex items-center gap-1.5 border-b bg-card px-3 py-2 transition-colors ${
+          dragOverHeader
+            ? 'border-dashed border-clay bg-clay/5'
+            : 'border-border'
+        }`}
+        onDragEnter={(e) => {
+          if (![...e.dataTransfer.types].includes('Files')) return
+          e.preventDefault()
+          dragDepthRef.current += 1
+          setDragOverHeader(true)
+        }}
+        onDragOver={(e) => {
+          if (![...e.dataTransfer.types].includes('Files')) return
+          e.preventDefault() // 允许 drop
+        }}
+        onDragLeave={() => {
+          dragDepthRef.current -= 1
+          if (dragDepthRef.current <= 0) {
+            dragDepthRef.current = 0
+            setDragOverHeader(false)
+          }
+        }}
+        onDrop={(e) => {
+          dragDepthRef.current = 0
+          setDragOverHeader(false)
+          const file = e.dataTransfer.files?.[0]
+          if (!file) return
+          if (!file.name.toLowerCase().endsWith('.json')) {
+            e.preventDefault()
+            return // 非 json 文件交给默认行为（如拖到输入框附件），不做导入
+          }
+          e.preventDefault()
+          onImportSessionJson(file)
+        }}
+      >
         <Sparkles className="h-4 w-4 shrink-0 text-clay" />
         <Popover open={sessionMenuOpen} onOpenChange={(open) => {
           setSessionMenuOpen(open)

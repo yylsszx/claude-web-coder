@@ -1442,11 +1442,39 @@ export default function WorkspacePage() {
       try {
         const text = await file.text()
         const data = JSON.parse(text) as {
+          app?: unknown
+          schemaVersion?: unknown
           session?: { title?: unknown }
           messages?: unknown
         }
-        if (!data || !Array.isArray(data.messages) || data.messages.length === 0) {
+        // 版本校验：比当前更新（schemaVersion > 1）的备份拒绝导入，防止新格式字段被静默丢弃
+        if (
+          typeof data.schemaVersion === 'number' &&
+          data.schemaVersion > 1
+        ) {
+          toast({
+            title: '备份版本过新，无法导入',
+            description: `该备份的 schemaVersion 为 ${data.schemaVersion}，当前应用支持到 1，请先升级应用`,
+            variant: 'destructive',
+          })
+          return
+        }
+        if (
+          !data ||
+          !Array.isArray(data.messages) ||
+          data.messages.length === 0
+        ) {
           throw new Error('文件中没有可导入的消息（缺少 messages 数组）')
+        }
+        // 非本应用导出的备份（如其他工具的同结构导出）：警告但尝试按通用格式导入
+        if (
+          typeof data.app === 'string' &&
+          data.app !== 'claude-web-coder'
+        ) {
+          toast({
+            title: '提示：这是非本应用导出的备份',
+            description: `来源「${data.app}」，将按通用格式尝试导入`,
+          })
         }
         const res = await fetch('/api/sessions', {
           method: 'POST',
