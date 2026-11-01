@@ -45,6 +45,10 @@ export default function WorkspacePage() {
   // ===== 文件与标签页状态 =====
   const [files, setFiles] = useState<FileMeta[]>([])
   const [openTabs, setOpenTabs] = useState<FileFull[]>([])
+  // 固定标签 ID 列表：固定后显示图钉、隐藏 ×、双击/中键不再关闭，批量关闭（其他/右侧/全部）跳过固定标签；localStorage 持久化
+  const [pinnedTabIds, setPinnedTabIds] = useState<string[]>([])
+  const pinnedIdsRef = useRef<string[]>([])
+  pinnedIdsRef.current = pinnedTabIds
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabStates, setTabStates] = useState<Record<string, SaveState>>({})
   // 标签页持久化守卫：初始加载完成恢复（或确认无存档）后才允许写入 localStorage，
@@ -123,6 +127,17 @@ export default function WorkspacePage() {
       ? `${activeTabPath.split('/').pop()} — Claude 风格 AI 编程工作台`
       : 'Claude 风格 AI 编程工作台'
   }, [activeTabPath])
+
+  // 固定标签持久化（仅存 ID；文件删除后由恢复逻辑自动过滤）。
+  // 与下方标签持久化同一守卫：初始恢复完成前禁止写入，否则挂载首帧的空列表会覆盖存档
+  useEffect(() => {
+    if (!tabsRestoredRef.current) return
+    try {
+      localStorage.setItem('cw-pinned-tabs', JSON.stringify(pinnedTabIds))
+    } catch {
+      /* 存储不可用则忽略 */
+    }
+  }, [pinnedTabIds])
 
   // refs：异步回调中读取最新值
   const openTabsRef = useRef(openTabs)
@@ -462,14 +477,34 @@ export default function WorkspacePage() {
               )
               if (restored.length > 0) {
                 tabsRestoredRef.current = true
-                setOpenTabs(restored)
+                // 恢复固定标签（cw-pinned-tabs 仅存 ID）：过滤已不存在的，并把固定标签排到最前
+                let pinned: string[] = []
+                try {
+                  const rawPinned: unknown = JSON.parse(
+                    localStorage.getItem('cw-pinned-tabs') ?? '[]'
+                  )
+                  if (Array.isArray(rawPinned)) {
+                    pinned = rawPinned.filter(
+                      (v: unknown): v is string =>
+                        typeof v === 'string' && restored.some((t) => t.id === v)
+                    )
+                  }
+                } catch {
+                  /* 存档损坏则忽略 */
+                }
+                setPinnedTabIds(pinned)
+                const ordered = [
+                  ...pinned.map((id) => restored.find((t) => t.id === id)!),
+                  ...restored.filter((t) => !pinned.includes(t.id)),
+                ]
+                setOpenTabs(ordered)
                 setTabStates(
-                  Object.fromEntries(restored.map((t) => [t.id, 'saved' as SaveState]))
+                  Object.fromEntries(ordered.map((t) => [t.id, 'saved' as SaveState]))
                 )
                 setActiveTabId(
-                  savedActive && restored.some((t) => t.id === savedActive)
+                  savedActive && ordered.some((t) => t.id === savedActive)
                     ? savedActive
-                    : restored[restored.length - 1].id
+                    : ordered[ordered.length - 1].id
                 )
               }
             }
@@ -710,38 +745,57 @@ export default function WorkspacePage() {
         const { [id]: _removed, ...rest } = prev
         return rest
       })
+      // 固定列表同步清理，避免孤儿 ID
+      setPinnedTabIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : prev))
     },
     [saveTab, tabStates]
   )
 
-  /** 右键菜单：关闭除指定标签外的所有标签（未保存的先自动保存） */
+  /** 固定 / 取消固定标签：固定时把标签移到最前（取消固定保持原位） */
+  const togglePinTab = useCallback((id: string) => {
+    setPinnedTabIds((prev) => {
+      if (prev.includes(id)) return prev.filter((v) => v !== id)
+      return [id, ...prev]
+    })
+    setOpenTabs((tabs) => {
+      if (pinnedIdsRef.current.includes(id)) return tabs // 取消固定：不动位置
+      const target = tabs.find((t) => t.id === id)
+      if (!target) return tabs
+      return [target, ...tabs.filter((t) => t.id !== id)]
+    })
+  }, [])
+
+  /** 右键菜单：关闭除指定标签外的所有标签（未保存的先自动保存；固定标签跳过） */
   const closeOtherTabs = useCallback(
     async (id: string) => {
       const snapshot = openTabsRef.current.map((t) => t.id)
       for (const tid of snapshot) {
-        if (tid !== id) await closeTab(tid)
-      }
-    },
-    [closeTab]
-  )
-
-  /** 右键菜单：关闭指定标签右侧的所有标签 */
-  const closeRightTabs = useCallback(
-    async (id: string) => {
-      const idx = openTabsRef.current.findIndex((t) => t.id === id)
-      if (idx < 0) return
-      const rightIds = openTabsRef.current.slice(idx + 1).map((t) => t.id)
-      for (const tid of rightIds) {
+        if (tid === id || pinnedIdsRef.current.includes(tid)) continue
         await closeTab(tid)
       }
     },
     [closeTab]
   )
 
-  /** 右键菜单：关闭全部标签 */
+  /** 右键菜单：关闭指定标签右侧的所有标签（固定标签跳过） */
+  const closeRightTabs = useCallback(
+    async (id: string) => {
+      const idx = openTabsRef.current.findIndex((t) => t.id === id)
+      if (idx < 0) return
+      const rightIds = openTabsRef.current.slice(idx + 1).map((t) => t.id)
+      for (const tid of rightIds) {
+        if (pinnedIdsRef.current.includes(tid)) continue
+        await closeTab(tid)
+      }
+    },
+    [closeTab]
+  )
+
+  /** 右键菜单：关闭全部标签（固定标签跳过，保护工作区上下文） */
   const closeAllTabs = useCallback(async () => {
     const snapshot = openTabsRef.current.map((t) => t.id)
     for (const tid of snapshot) {
+      if (pinnedIdsRef.current.includes(tid)) continue
       await closeTab(tid)
     }
   }, [closeTab])
@@ -2153,6 +2207,8 @@ export default function WorkspacePage() {
       onCloseOtherTabs={closeOtherTabs}
       onCloseRightTabs={closeRightTabs}
       onCloseAllTabs={closeAllTabs}
+      pinnedIds={pinnedTabIds}
+      onTogglePinTab={togglePinTab}
       onViewUnsavedDiff={(tabId) => void openUnsavedDiff(tabId)}
       onReorderTabs={reorderTabs}
       onChange={handleEditorChange}

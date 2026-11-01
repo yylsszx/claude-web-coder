@@ -182,6 +182,22 @@
   color: #d97757 !important;
 }
 
+/* 中文化查找替换面板：开关按钮的 clay 高亮态（data-on 控制，避开 Tailwind 类冲突） */
+.cw-search-panel button[data-on='true'] {
+  background: rgba(217, 119, 87, 0.12);
+  color: #d97757;
+}
+.dark .cw-search-panel button[data-on='true'] {
+  background: rgba(217, 119, 87, 0.22);
+}
+/* 搜索匹配高亮与 clay 主题统一（默认 highlight 偏黄） */
+.cm-searchMatch {
+  background: rgba(217, 119, 87, 0.22) !important;
+}
+.cm-searchMatch-selected {
+  background: rgba(217, 119, 87, 0.45) !important;
+}
+
 /* AI 回复中的 Markdown 样式 */
 .ai-markdown {
   font-size: 13.5px;

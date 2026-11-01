@@ -16,7 +16,18 @@ import type { Command, ViewUpdate } from '@codemirror/view'
 import { EditorSelection, EditorState, Prec } from '@codemirror/state'
 import { cursorMatchingBracket, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { foldAll, indentUnit, unfoldAll } from '@codemirror/language'
-import { search, searchKeymap } from '@codemirror/search'
+import {
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  replaceAll,
+  replaceNext,
+  search,
+  searchKeymap,
+  SearchQuery,
+  setSearchQuery,
+} from '@codemirror/search'
+import type { Panel } from '@codemirror/view'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { html } from '@codemirror/lang-html'
@@ -48,6 +59,7 @@ import {
   MoreHorizontal,
   Pencil,
   PencilLine,
+  Pin,
   Plus,
   Redo2,
   Undo2,
@@ -112,6 +124,220 @@ export interface JumpTarget {
 
 /** 编辑器选中文本后可触发的 AI 快捷操作 */
 export type SelectionAction = 'explain' | 'optimize' | 'fix'
+
+// ===== 中文化查找替换面板 =====
+// 默认面板为英文且不可改文案，改用自定义 createPanel 重绘：功能对齐默认面板（正则 / 大小写 /
+// 整词 / 替换 / 全部替换），样式走应用既有 Tailwind 类（clay 高亮、圆角卡片）。
+// 上次查询状态记在模块级变量：重新打开面板时回填，与默认面板的 searchState 持久化对齐。
+const searchPanelState = {
+  text: '',
+  replace: '',
+  regexp: false,
+  caseSensitive: false,
+  wholeWord: false,
+}
+
+/** 由面板状态构造用于计数的高亮正则（非法正则返回 null） */
+function buildSearchRegExp(
+  text: string,
+  regexp: boolean,
+  caseSensitive: boolean,
+  wholeWord: boolean
+): RegExp | null {
+  if (!text) return null
+  let source = regexp ? text : text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (wholeWord) source = `\\b(?:${source})\\b`
+  try {
+    return new RegExp(source, caseSensitive ? 'g' : 'gi')
+  } catch {
+    return null
+  }
+}
+
+function makeSearchQuery(): SearchQuery {
+  return new SearchQuery({
+    search: searchPanelState.text,
+    replace: searchPanelState.replace,
+    regexp: searchPanelState.regexp,
+    caseSensitive: searchPanelState.caseSensitive,
+    wholeWord: searchPanelState.wholeWord,
+  })
+}
+
+/** 统计当前文档匹配数（上限 999 显示 999+；零宽匹配推进防死循环） */
+function countMatches(view: EditorView, re: RegExp | null): number | null {
+  if (!re) return null
+  const text = view.state.doc.sliceString(0, view.state.doc.length)
+  let n = 0
+  re.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    n += 1
+    if (n >= 999) return 999
+    if (m[0] === '') re.lastIndex += 1
+    if (re.lastIndex > text.length) break
+  }
+  return n
+}
+
+function createCnSearchPanel(view: EditorView): Panel {
+  const st = searchPanelState
+  const inputBase =
+    'h-7 min-w-0 flex-1 rounded-md border border-border bg-card px-2 text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-clay/70'
+  const btnBase =
+    'flex h-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+
+  const el = <K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className: string,
+    text?: string
+  ): HTMLElementTagNameMap[K] => {
+    const node = document.createElement(tag)
+    node.className = className
+    if (text !== undefined) node.textContent = text
+    return node
+  }
+
+  const dom = el(
+    'div',
+    'cw-search-panel flex flex-col gap-1.5 border-b border-border bg-background px-2.5 py-2'
+  )
+
+  const queryInput = el('input', inputBase)
+  queryInput.placeholder = '查找…（Enter 下一个，Shift+Enter 上一个）'
+  queryInput.spellcheck = false
+  queryInput.value = st.text
+  queryInput.setAttribute('aria-label', '查找内容')
+  const countEl = el('span', 'shrink-0 whitespace-nowrap text-[11px] text-muted-foreground')
+
+  const prevBtn = el('button', btnBase + ' px-1.5 text-[11px]', '上一个')
+  prevBtn.type = 'button'
+  prevBtn.title = '上一个匹配（Shift+Enter）'
+  prevBtn.setAttribute('aria-label', '上一个匹配')
+  prevBtn.onclick = () => st.text && findPrevious(view)
+  const nextBtn = el('button', btnBase + ' px-1.5 text-[11px]', '下一个')
+  nextBtn.type = 'button'
+  nextBtn.title = '下一个匹配（Enter）'
+  nextBtn.setAttribute('aria-label', '下一个匹配')
+  nextBtn.onclick = () => st.text && findNext(view)
+
+  const mkToggle = (
+    label: string,
+    size: string,
+    title: string,
+    key: 'regexp' | 'caseSensitive' | 'wholeWord'
+  ) => {
+    const b = el('button', btnBase + ' font-mono ' + size, label)
+    b.type = 'button'
+    b.title = title
+    b.setAttribute('aria-pressed', String(st[key]))
+    b.setAttribute('aria-label', title)
+    const sync = () => {
+      b.dataset.on = String(st[key])
+      b.setAttribute('aria-pressed', String(st[key]))
+    }
+    sync()
+    b.onclick = () => {
+      st[key] = !st[key]
+      sync()
+      applyToState(false)
+    }
+    return b
+  }
+  const caseBtn = mkToggle('Aa', 'w-7 text-[11px]', '区分大小写', 'caseSensitive')
+  const reBtn = mkToggle('.*', 'w-8 text-[11px]', '正则表达式', 'regexp')
+  const wordBtn = mkToggle('整词', 'px-1.5 text-[11px]', '整词匹配', 'wholeWord')
+  const closeBtn = el('button', btnBase + ' w-6 text-[13px]', '×')
+  closeBtn.type = 'button'
+  closeBtn.title = '关闭（Esc）'
+  closeBtn.setAttribute('aria-label', '关闭查找面板')
+  closeBtn.onclick = () => closeSearchPanel(view)
+
+  const findRow = el('div', 'flex items-center gap-1.5')
+  findRow.append(queryInput, countEl, prevBtn, nextBtn, caseBtn, reBtn, wordBtn, closeBtn)
+
+  const replaceInput = el('input', inputBase)
+  replaceInput.placeholder = '替换为…（留空即删除匹配；正则下支持 $1 引用）'
+  replaceInput.spellcheck = false
+  replaceInput.value = st.replace
+  replaceInput.setAttribute('aria-label', '替换为')
+  const repBtn = el('button', btnBase + ' px-1.5 text-[11.5px]', '替换')
+  repBtn.type = 'button'
+  repBtn.title = '替换当前匹配（保持选中下一个）'
+  repBtn.setAttribute('aria-label', '替换当前匹配')
+  repBtn.onclick = () => st.text && replaceNext(view)
+  const repAllBtn = el('button', btnBase + ' px-1.5 text-[11.5px]', '全部替换')
+  repAllBtn.type = 'button'
+  repAllBtn.title = '一次性替换全部匹配（可撤销）'
+  repAllBtn.setAttribute('aria-label', '全部替换')
+  repAllBtn.onclick = () => st.text && replaceAll(view)
+
+  const replaceRow = el('div', 'flex items-center gap-1.5')
+  replaceRow.append(replaceInput, repBtn, repAllBtn)
+  dom.append(findRow, replaceRow)
+
+  function updateCount() {
+    if (!st.text) {
+      countEl.textContent = ''
+      countEl.className = 'shrink-0 whitespace-nowrap text-[11px] text-muted-foreground'
+      return
+    }
+    const re = buildSearchRegExp(st.text, st.regexp, st.caseSensitive, st.wholeWord)
+    if (!re) {
+      countEl.textContent = '正则无效'
+      countEl.className = 'shrink-0 whitespace-nowrap text-[11px] text-destructive'
+      return
+    }
+    countEl.className = 'shrink-0 whitespace-nowrap text-[11px] text-muted-foreground'
+    const n = countMatches(view, re)
+    countEl.textContent = n === 0 ? '无结果' : n !== null && n >= 999 ? '999+ 处' : `${n} 处`
+  }
+
+  function applyToState(jump: boolean) {
+    view.dispatch({ effects: setSearchQuery.of(makeSearchQuery()) })
+    if (jump && st.text) findNext(view)
+    updateCount()
+  }
+
+  const onInputKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (!st.text) return
+      if (e.shiftKey) findPrevious(view)
+      else findNext(view)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      closeSearchPanel(view)
+    }
+  }
+  queryInput.addEventListener('keydown', onInputKey)
+  replaceInput.addEventListener('keydown', onInputKey)
+  queryInput.addEventListener('input', () => {
+    st.text = queryInput.value
+    applyToState(false)
+  })
+  replaceInput.addEventListener('input', () => {
+    st.replace = replaceInput.value
+    applyToState(false)
+  })
+
+  return {
+    dom,
+    top: true,
+    mount() {
+      updateCount()
+      queryInput.focus()
+      queryInput.select()
+    },
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.selectionSet) updateCount()
+    },
+  }
+}
+
+/** 固定标签空列表：props 未传时复用同一引用，避免每渲染新分配破坏编译器 memoization */
+const EMPTY_TAB_IDS: string[] = []
 
 /** 复制当前行 / 选区（Ctrl/⌘ + D）：副本插到原处下方，光标随行移动、选区随文本选中 */
 const duplicateSelection: Command = (view) => {
@@ -319,6 +545,10 @@ interface CodeEditorProps {
   onCloseRightTabs: (id: string) => void
   /** 右键菜单：关闭全部标签 */
   onCloseAllTabs: () => void
+  /** 固定标签的 ID 列表（固定后显示图钉、隐藏 ×、双击/中键不再关闭，批量关闭由页面层跳过） */
+  pinnedIds?: string[]
+  /** 切换标签固定态（固定时标签移到最前） */
+  onTogglePinTab?: (id: string) => void
   /** 右键菜单：查看未保存更改（对比服务器版本与编辑器当前内容，可按块保存）；未保存标签才显示 */
   onViewUnsavedDiff?: (tabId: string) => void
   /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
@@ -365,6 +595,8 @@ export function CodeEditor({
   onCloseOtherTabs,
   onCloseRightTabs,
   onCloseAllTabs,
+  pinnedIds: pinnedIdsProp,
+  onTogglePinTab,
   onViewUnsavedDiff,
   onReorderTabs,
   onChange,
@@ -814,6 +1046,8 @@ export function CodeEditor({
   }
 
   const language = file?.language
+  // 固定标签列表：未传时复用模块级空数组（稳定引用）
+  const pinnedIds = pinnedIdsProp ?? EMPTY_TAB_IDS
   const wrapText = prefs.wrap
   const fontSize = prefs.font
   const indentWidth = prefs.indent
@@ -824,7 +1058,7 @@ export function CodeEditor({
     // Mod-Shift-\ 匹配括号跳转：显式注册而非依赖 defaultKeymap —— Shift 与 \ 组合键在
     // 美式布局下 event.key 是 |，内置键名的匹配可能落空，双写两种键名保证生效
     const base: Extension[] = [
-      search(),
+      search({ createPanel: createCnSearchPanel }),
       Prec.high(
         keymap.of([
           { key: 'Mod-d', run: duplicateSelection },
@@ -970,6 +1204,7 @@ export function CodeEditor({
             const isActive = tab.id === activeId
             const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
             const isLast = idx === tabs.length - 1
+            const isPinned = pinnedIds.includes(tab.id)
             return (
               <ContextMenu key={tab.id}>
                 <ContextMenuTrigger asChild>
@@ -1004,16 +1239,16 @@ export function CodeEditor({
                       setDropTargetId(null)
                     }}
                     onMouseDown={(e) => {
-                      // 中键点击关闭标签（与 × 一致，走脏保存链路）；阻止浏览器自动滚动
+                      // 中键点击关闭标签（与 × 一致，走脏保存链路）；固定标签不关，仅阻止浏览器自动滚动
                       if (e.button === 1) {
                         e.preventDefault()
-                        onCloseTab(tab.id)
+                        if (!isPinned) onCloseTab(tab.id)
                       }
                     }}
                     onDoubleClick={(e) => {
-                      // 双击标签任意位置关闭（单击切换 / 中键关闭 / 右键菜单均保留）
+                      // 双击标签任意位置关闭（单击切换 / 中键关闭 / 右键菜单均保留）；固定标签不关
                       e.preventDefault()
-                      onCloseTab(tab.id)
+                      if (!isPinned) onCloseTab(tab.id)
                     }}
                     className={`group/tab flex min-w-[110px] max-w-[180px] shrink-0 cursor-grab items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[12.5px] transition-colors ${
                       isActive
@@ -1028,26 +1263,43 @@ export function CodeEditor({
                     <button
                       className="min-w-0 flex-1 truncate py-1.5 text-left"
                       onClick={() => onSwitchTab(tab.id)}
-                      title={tab.path}
+                      title={isPinned ? `${tab.path}（已固定 · 双击/中键/× 不再关闭，右键可取消固定）` : tab.path}
                     >
                       {tabLabels.get(tab.id) ?? tab.path.split('/').pop()}
                     </button>
+                    {isPinned && (
+                      <Pin className="h-3 w-3 shrink-0 fill-current text-clay" aria-hidden />
+                    )}
                     {isDirty && (
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay" title="未保存" />
                     )}
-                    <button
-                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-accent group-hover/tab:opacity-100 focus:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onCloseTab(tab.id)
-                      }}
-                      aria-label={`关闭 ${tab.path}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    {!isPinned && (
+                      <button
+                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-accent group-hover/tab:opacity-100 focus:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onCloseTab(tab.id)
+                        }}
+                        aria-label={`关闭 ${tab.path}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-44">
+                  {onTogglePinTab && (
+                    <ContextMenuItem
+                      onSelect={() => onTogglePinTab(tab.id)}
+                      title={
+                        isPinned
+                          ? '取消后恢复 × / 双击 / 中键关闭与批量关闭'
+                          : '固定后显示图钉，双击 / 中键 / 批量关闭都不会关掉它'
+                      }
+                    >
+                      {isPinned ? '取消固定' : '固定标签'}
+                    </ContextMenuItem>
+                  )}
                   {onViewUnsavedDiff && (
                     <ContextMenuItem
                       onSelect={() => onViewUnsavedDiff(tab.id)}
@@ -1101,6 +1353,7 @@ export function CodeEditor({
                 {tabs.map((tab) => {
                   const isDirty = (tabStates[tab.id] ?? 'saved') !== 'saved'
                   const name = tab.path.split('/').pop() || tab.path
+                  const isPinned = pinnedIds.includes(tab.id)
                   return (
                     <DropdownMenuItem
                       key={tab.id}
@@ -1110,6 +1363,9 @@ export function CodeEditor({
                       <span className="min-w-0 flex-1 truncate" title={tab.path}>
                         {name}
                       </span>
+                      {isPinned && (
+                        <Pin className="ml-1 h-3 w-3 shrink-0 fill-current text-clay" aria-hidden />
+                      )}
                       {isDirty && (
                         <span
                           className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-clay"

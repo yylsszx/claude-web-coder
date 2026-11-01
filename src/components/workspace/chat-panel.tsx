@@ -283,6 +283,9 @@ export function ChatPanel({
   // 拖拽 .json 备份到聊天头部导入：dragover 高亮提示（离开 / 松开复位）
   const [dragOverHeader, setDragOverHeader] = useState(false)
   const dragDepthRef = useRef(0)
+  // 拖拽图片文件到输入框：直接加入待发送附件（与粘贴同一条压缩管线）
+  const [imgDragOver, setImgDragOver] = useState(false)
+  const inputDragDepthRef = useRef(0)
   const [inlineRenameValue, setInlineRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null)
   // ===== 代码块收藏夹：localStorage 外部存储（写入即广播事件，代码块星星与列表同步）=====
@@ -1774,7 +1777,50 @@ export function ChatPanel({
 
       {/* 输入区 */}
       <div className="px-3 pb-3">
-        <div className="relative rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay/60">
+        <div
+          className={`relative rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay/60 ${
+            imgDragOver ? 'border-clay ring-2 ring-clay/40' : ''
+          }`}
+          onDragEnter={(e) => {
+            if (![...e.dataTransfer.types].includes('Files')) return
+            e.preventDefault()
+            inputDragDepthRef.current += 1
+            setImgDragOver(true)
+          }}
+          onDragOver={(e) => {
+            if (![...e.dataTransfer.types].includes('Files')) return
+            e.preventDefault() // 允许 drop（同时阻断浏览器默认打开文件）
+          }}
+          onDragLeave={() => {
+            inputDragDepthRef.current -= 1
+            if (inputDragDepthRef.current <= 0) {
+              inputDragDepthRef.current = 0
+              setImgDragOver(false)
+            }
+          }}
+          onDrop={(e) => {
+            inputDragDepthRef.current = 0
+            setImgDragOver(false)
+            const files = Array.from(e.dataTransfer.files ?? [])
+            if (!files.length) return
+            const hasImage = files.some((f) => f.type.startsWith('image/'))
+            if (hasImage) {
+              // 图片（可混拖）：入待发送附件区；非图片部分由 addImageFiles 过滤
+              e.preventDefault()
+              void addImageFiles(e.dataTransfer.files)
+              return
+            }
+            // 非图片：阻断浏览器默认打开文件；备份文件给出正确入口提示
+            e.preventDefault()
+            const first = files[0]
+            if (first.name.toLowerCase().endsWith('.json') || first.name.toLowerCase().endsWith('.zip')) {
+              toast({
+                title: '备份文件请拖到顶部标题栏导入',
+                description: '或使用会话菜单中的「导入」按钮',
+              })
+            }
+          }}
+        >
           {/* 拖拽把手：向上拖增大输入框高度，双击复位（200px） */}
           <div
             className="group/handle absolute inset-x-0 top-0 z-10 flex h-3 cursor-row-resize items-start justify-center touch-none"
