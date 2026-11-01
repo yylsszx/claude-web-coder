@@ -117,6 +117,11 @@ function fileIcon(language: string) {
 const EMPTY_FOLDERS: ReadonlySet<string> = new Set()
 let expandedCache: ReadonlySet<string> = EMPTY_FOLDERS
 let expandedDirty = true
+
+/** 正在被拖拽的目录路径：模块级变量而非 React state——拖拽事件序列（dragstart→dragover→drop）
+ * 可能在同一个批处理内同步发生，state 在 drop 时还未刷新会导致守卫读到 null 落空；
+ * 模块变量在 dragstart 里同步赋值，后续事件同步可读，无时序问题（dragend 必触发清空） */
+let draggingDirPath: string | null = null
 const expandedListeners = new Set<() => void>()
 
 function readExpanded(): ReadonlySet<string> {
@@ -168,6 +173,8 @@ interface FileTreeProps {
   onDelete: (id: string) => Promise<void>
   /** 拖拽移动文件到目录（拼 newPath 走重命名链路） */
   onMoveFile?: (fileId: string, dirPath: string) => Promise<boolean>
+  /** 拖拽移动目录到另一目录（批量改前缀走 move-dir 端点；targetPath 为 '' 表示移到根） */
+  onMoveDir?: (dirPath: string, targetPath: string) => Promise<boolean>
   onQuickOpen: () => void
   /** 拖拽本地文件到文件树导入工作区 */
   onImportFiles: (dropped: File[]) => void
@@ -184,6 +191,7 @@ export function FileTree({
   onRename,
   onDelete,
   onMoveFile,
+  onMoveDir,
   onQuickOpen,
   onImportFiles,
   importingFiles,
@@ -217,6 +225,11 @@ export function FileTree({
   const [dragOverDir, setDragOverDir] = useState<string | null>(null)
   /** dataTransfer 自定义类型：标记拖拽源为本工作区文件（与外部文件导入区分） */
   const FILE_ID_TYPE = 'application/cw-file-id'
+  /** dataTransfer 自定义类型：标记拖拽源为本工作区目录 */
+  const DIR_ID_TYPE = 'application/cw-dir-id'
+  /** 目标目录是否在被拖目录自身或其子树内（拖进自己内部没有意义） */
+  const isOwnSubtree = (dragDir: string | null, target: string) =>
+    !!dragDir && (target === dragDir || target.startsWith(`${dragDir}/`))
 
   const tree = useMemo(() => buildTree(files), [files])
 
@@ -289,13 +302,25 @@ export function FileTree({
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <button
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(DIR_ID_TYPE, dirPath)
+                    e.dataTransfer.effectAllowed = 'move'
+                    draggingDirPath = dirPath
+                  }}
+                  onDragEnd={() => {
+                    draggingDirPath = null
+                  }}
                   className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-foreground/80 hover:bg-accent transition-colors ${
                     dragOverDir === nodePath ? 'bg-clay/10 ring-1 ring-inset ring-clay/70' : ''
                   }`}
                   style={{ paddingLeft: `${8 + depth * 14}px` }}
                   onClick={() => toggleFolder(nodePath)}
                   onDragOver={(e) => {
-                    if (e.dataTransfer.types.includes(FILE_ID_TYPE)) {
+                    const acceptsFile = e.dataTransfer.types.includes(FILE_ID_TYPE)
+                    const acceptsDir =
+                      e.dataTransfer.types.includes(DIR_ID_TYPE) && !isOwnSubtree(draggingDirPath, dirPath)
+                    if (acceptsFile || acceptsDir) {
                       e.preventDefault()
                       e.dataTransfer.dropEffect = 'move'
                       setDragOverDir(nodePath)
@@ -306,11 +331,22 @@ export function FileTree({
                   }}
                   onDrop={(e) => {
                     const fid = e.dataTransfer.getData(FILE_ID_TYPE)
-                    if (!fid) return // 外部文件拖入：不拦截，冒泡给根容器走导入
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setDragOverDir(null)
-                    void onMoveFile?.(fid, dirPath)
+                    if (fid) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setDragOverDir(null)
+                      void onMoveFile?.(fid, dirPath)
+                      return
+                    }
+                    const draggedDir = e.dataTransfer.getData(DIR_ID_TYPE)
+                    if (draggedDir) {
+                      if (isOwnSubtree(draggingDirPath, dirPath)) return // 拖进自己 / 子孙目录：忽略
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setDragOverDir(null)
+                      void onMoveDir?.(draggedDir, dirPath)
+                    }
+                    // 两者皆非：外部内容拖入，不拦截，冒泡给根容器走导入
                   }}
                 >
                   {isOpen ? (
@@ -460,7 +496,9 @@ export function FileTree({
       onDragOver={(e) => {
         e.preventDefault()
         // 工作区内部拖拽移动（目录行自行处理）：不触发「导入到工作区」遮罩
-        if (!e.dataTransfer.types.includes(FILE_ID_TYPE)) setDragOver(true)
+        const internal =
+          e.dataTransfer.types.includes(FILE_ID_TYPE) || e.dataTransfer.types.includes(DIR_ID_TYPE)
+        if (!internal) setDragOver(true)
       }}
       onDragLeave={(e) => {
         // 仅在真正离开容器（而不是移入子元素）时取消高亮
@@ -469,7 +507,13 @@ export function FileTree({
       onDrop={(e) => {
         e.preventDefault()
         setDragOver(false)
-        // 内部移动由目录行处理并 stopPropagation；冒泡到这里（拖到非目录区域）不动作
+        // 内部目录拖到非目录区域 = 移到根目录
+        const draggedDir = e.dataTransfer.getData(DIR_ID_TYPE)
+        if (draggedDir) {
+          if (!isOwnSubtree(draggingDirPath, '')) void onMoveDir?.(draggedDir, '')
+          return
+        }
+        // 内部文件移动由目录行处理并 stopPropagation；冒泡到这里（拖到非目录区域）不动作
         if (e.dataTransfer.getData(FILE_ID_TYPE)) return
         const dropped = Array.from(e.dataTransfer.files)
         if (dropped.length) onImportFiles(dropped)

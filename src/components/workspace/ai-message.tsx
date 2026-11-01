@@ -3,6 +3,9 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
   oneDark,
@@ -630,7 +633,8 @@ export const AiMessage = memo(function AiMessage({
           style={collapsed ? { maxHeight: COLLAPSE_HEIGHT } : undefined}
         >
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
             components={{
               /** 标题打 data-heading-idx（渲染序号 = 源文标题序，parseHeadings 同序）：供目录点击定位；保留原标签名以继承 .ai-markdown 标题样式 */
               h1({ children }) {

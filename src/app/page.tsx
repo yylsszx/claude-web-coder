@@ -810,6 +810,47 @@ export default function WorkspacePage() {
     [renameFile]
   )
 
+  /** 文件树拖拽移动目录：整体成为目标子目录（走 move-dir 端点；targetPath 为 '' 表示移到根） */
+  const moveDir = useCallback(
+    async (dirPath: string, targetPath: string): Promise<boolean> => {
+      if (targetPath === dirPath || targetPath.startsWith(`${dirPath}/`)) {
+        toast({ title: '不能把目录移动到它自身或其子目录内', variant: 'destructive' })
+        return false
+      }
+      // 与服务端同规则的新前缀：拖进目录 = 整体成为其子目录；移到根 = 保留自身最后一段
+      const base = dirPath.split('/').pop()
+      const newPrefix = targetPath === '' ? `${base}/` : `${targetPath}/${base}/`
+      const oldPrefix = `${dirPath}/`
+      if (newPrefix === oldPrefix) return true // 拖回原位置（如根级目录拖到空白）不动作
+      try {
+        const res = await fetch('/api/files/move-dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dirPath, targetPath }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '移动目录失败')
+        await refreshFiles()
+        // 同步打开中的标签：路径前缀原样替换（basename 不变，language 不受影响）
+        setOpenTabs((prev) =>
+          prev.map((t) =>
+            t.path.startsWith(oldPrefix) ? { ...t, path: `${newPrefix}${t.path.slice(oldPrefix.length)}` } : t
+          )
+        )
+        toast({ title: `已移动目录（${data.moved} 个文件）`, description: `${dirPath}/ → ${newPrefix}*` })
+        return true
+      } catch (error) {
+        toast({
+          title: '移动目录失败',
+          description: error instanceof Error ? error.message : undefined,
+          variant: 'destructive',
+        })
+        return false
+      }
+    },
+    [refreshFiles, toast]
+  )
+
   const deleteFile = useCallback(
     async (id: string) => {
       try {
@@ -1659,6 +1700,7 @@ export default function WorkspacePage() {
       onRename={renameFile}
       onDelete={deleteFile}
       onMoveFile={moveFile}
+      onMoveDir={moveDir}
       onQuickOpen={() => setQuickOpen(true)}
       onImportFiles={(dropped) => void importDroppedFiles(dropped)}
       importingFiles={importingFiles}
