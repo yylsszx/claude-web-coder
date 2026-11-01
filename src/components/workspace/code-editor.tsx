@@ -24,6 +24,7 @@ import { css } from '@codemirror/lang-css'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { json } from '@codemirror/lang-json'
 import { sql } from '@codemirror/lang-sql'
+import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import type { Extension } from '@codemirror/state'
 import {
   Bold,
@@ -823,6 +824,17 @@ export function CodeEditor({
         ]),
       ),
       keymap.of(searchKeymap),
+      // 缩进标记线（VS Code 风格 indent guides）：按缩进层级绘制竖线，当前代码块所在层级
+      // 用 clay 色加粗高亮（highlightActiveBlock），嵌套结构一眼看清；配色随亮暗主题切换
+      ...indentationMarkers({
+        highlightActiveBlock: true,
+        colors: {
+          light: '#e5ded2',
+          dark: '#3d3a34',
+          activeLight: '#d97757',
+          activeDark: '#d97757',
+        },
+      }),
     ]
     if (wrapText) base.push(EditorView.lineWrapping)
     if (!language) return base

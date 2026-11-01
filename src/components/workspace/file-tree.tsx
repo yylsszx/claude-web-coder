@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
+  BarChart3,
   ChevronsDownUp,
   ChevronDown,
   ChevronRight,
@@ -16,11 +17,13 @@ import {
   FolderOpen,
   History,
   Import,
+  ListFilter,
   Loader2,
   MoreVertical,
   Pencil,
   Search,
   Trash2,
+  X,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { copyTextToClipboard } from '@/lib/utils'
@@ -57,6 +60,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import type { FileMeta } from '@/lib/types'
+import { WorkspaceStatsDialog } from '@/components/workspace/workspace-stats-dialog'
 
 interface TreeNode {
   name: string
@@ -220,6 +224,10 @@ export function FileTree({
   const [renaming, setRenaming] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FileMeta | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // 树内快速过滤：开关 + 关键词（按完整路径包含匹配，命中文件的祖先目录自动保留）
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filterQuery, setFilterQuery] = useState('')
+  const [statsOpen, setStatsOpen] = useState(false)
 
   // 切换标签 / 打开文件时，文件树自动滚动到当前文件（不在可视区才滚，不打扰手动浏览）
   useEffect(() => {
@@ -243,6 +251,16 @@ export function FileTree({
     !!dragDir && (target === dragDir || target.startsWith(`${dragDir}/`))
 
   const tree = useMemo(() => buildTree(files), [files])
+
+  /** 过滤是否生效（开关打开且有关键词）；命中时目录强制展开、忽略 localStorage 折叠态 */
+  const filterActive = filterOpen && filterQuery.trim().length > 0
+  /** 过滤结果树：按完整路径包含匹配，buildTree 自动保留命中文件的祖先目录链；count 为命中文件数 */
+  const filtered = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase()
+    if (!q) return null
+    const matched = files.filter((f) => f.path.toLowerCase().includes(q))
+    return { tree: buildTree(matched), count: matched.length }
+  }, [files, filterQuery])
 
   /** 树里是否有目录节点：决定「全部折叠」按钮是否可用 */
   const hasFolders = useMemo(() => {
@@ -328,7 +346,8 @@ export function FileTree({
   const renderNodes = (nodes: TreeNode[], depth: number, prefix = '') =>
     nodes.map((node) => {
       const nodePath = node.isFolder ? `${prefix}${node.name}/` : node.file!.path
-      const isOpen = expanded.has(nodePath)
+      // 过滤生效时目录强制展开（否则命中文件可能藏在折叠目录里看不到）
+      const isOpen = filterActive ? true : expanded.has(nodePath)
 
       if (node.isFolder) {
         const dirPath = `${prefix}${node.name}`
@@ -350,7 +369,10 @@ export function FileTree({
                     dragOverDir === nodePath ? 'bg-clay/10 ring-1 ring-inset ring-clay/70' : ''
                   }`}
                   style={{ paddingLeft: `${8 + depth * 14}px` }}
-                  onClick={() => toggleFolder(nodePath)}
+                  onClick={() => {
+                    // 过滤中目录始终展开，折叠无意义，不响应点击避免误导
+                    if (!filterActive) toggleFolder(nodePath)
+                  }}
                   onDragOver={(e) => {
                     const acceptsFile = e.dataTransfer.types.includes(FILE_ID_TYPE)
                     const acceptsDir =
@@ -589,12 +611,30 @@ export function FileTree({
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            disabled={!hasFolders || expanded.size === 0}
+            disabled={!hasFolders || expanded.size === 0 || filterActive}
             onClick={collapseAll}
             aria-label="全部折叠"
-            title="全部折叠目录"
+            title={filterActive ? '过滤中不适用折叠' : '全部折叠目录'}
           >
             <ChevronsDownUp className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => {
+              setFilterOpen((v) => {
+                if (v) setFilterQuery('') // 关闭过滤时清空关键词，避免下次打开残留旧词
+                return !v
+              })
+            }}
+            aria-label="过滤文件"
+            aria-pressed={filterOpen}
+            title="在文件树内按路径过滤"
+          >
+            <ListFilter
+              className={`h-4 w-4 ${filterOpen ? 'text-clay' : 'text-muted-foreground'}`}
+            />
           </Button>
           <Button
             variant="ghost"
@@ -657,6 +697,44 @@ export function FileTree({
         </div>
       </div>
 
+      {filterOpen && (
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="按路径过滤文件…"
+              className="h-8 pl-7 pr-7 text-[13px]"
+              aria-label="过滤文件"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setFilterQuery('')
+                  setFilterOpen(false)
+                }
+              }}
+              autoFocus
+            />
+            {filterQuery && (
+              <button
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={() => setFilterQuery('')}
+                aria-label="清空过滤关键词"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {filterActive && (
+            <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
+              {filtered && filtered.count > 0
+                ? `${filtered.count} 个匹配文件`
+                : '无匹配文件，试试其他关键词'}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="thin-scrollbar flex-1 overflow-y-auto px-2 pb-3">
         {files.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">
@@ -664,10 +742,31 @@ export function FileTree({
             <br />
             或把本地文件拖到这里导入
           </p>
+        ) : filterActive ? (
+          filtered && filtered.count > 0 ? (
+            renderNodes(filtered.tree, 0)
+          ) : (
+            <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+              无匹配文件
+            </p>
+          )
         ) : (
           renderNodes(tree, 0)
         )}
       </div>
+
+      {/* 底部：工作区统计入口 */}
+      <div className="border-t px-2.5 py-1.5">
+        <button
+          className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+          onClick={() => setStatsOpen(true)}
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          工作区统计
+        </button>
+      </div>
+
+      <WorkspaceStatsDialog open={statsOpen} onOpenChange={setStatsOpen} />
 
       {/* 新建文件 / 文件夹对话框 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
