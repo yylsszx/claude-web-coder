@@ -71,7 +71,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { AiMessage } from '@/components/workspace/ai-message'
-import { VersionHistoryDialog } from '@/components/workspace/version-history-dialog'
 import type { FileFull, FileMeta } from '@/lib/types'
 
 const LANGUAGE_EXTENSIONS: Record<string, () => Extension> = {
@@ -339,8 +338,8 @@ interface CodeEditorProps {
   onGlobalSearch?: () => void
   /** 状态栏「行，列」点击回调：打开转到行对话框（未传时渲染纯文本） */
   onOpenGoto?: () => void
-  /** 历史版本回滚：写入快照内容（source=rollback）并同步编辑器，返回是否成功 */
-  onRollback: (fileId: string, content: string) => Promise<boolean>
+  /** 打开当前文件的历史版本对话框（对话框在页面层，未打开文件也可从文件树右键进入） */
+  onOpenHistory: () => void
 }
 
 export function CodeEditor({
@@ -368,7 +367,7 @@ export function CodeEditor({
   onQuickOpen,
   onGlobalSearch,
   onOpenGoto,
-  onRollback,
+  onOpenHistory,
 }: CodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const { toast } = useToast()
@@ -460,9 +459,6 @@ export function CodeEditor({
     setSelState(null)
     setMdView('edit')
   }
-
-  /** 历史版本对话框（每次内容变更自动快照，可预览与回滚） */
-  const [historyOpen, setHistoryOpen] = useState(false)
 
   // 跳转到指定行（全局搜索命中后调用）：光标定位 + 居中滚动 + 焦点
   useEffect(() => {
@@ -1121,10 +1117,10 @@ export function CodeEditor({
             <Braces className="h-3 w-3" />
           </button>
         )}
-        {/* 历史版本：每次内容变更自动快照，可预览与一键回滚 */}
+        {/* 历史版本：每次内容变更自动快照，可预览 / 对比 / 一键回滚 */}
         <button
           type="button"
-          onClick={() => setHistoryOpen(true)}
+          onClick={onOpenHistory}
           title="历史版本（保存 / AI 应用自动快照，可回滚）"
           aria-label="历史版本"
           data-testid="history-btn"
@@ -1456,18 +1452,6 @@ export function CodeEditor({
             <X className="h-3 w-3" />
           </button>
         </div>
-      )}
-
-      {/* 历史版本对话框 */}
-      {file && (
-        <VersionHistoryDialog
-          open={historyOpen}
-          onOpenChange={setHistoryOpen}
-          fileId={file.id}
-          filePath={file.path}
-          currentContent={file.content}
-          onRollback={onRollback}
-        />
       )}
     </div>
   )

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { useMounted } from '@/hooks/use-mounted'
 import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels'
-import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText } from 'lucide-react'
+import { Github, Sparkles, Loader2, FileCode2, FileJson, Search, Download, Keyboard, Undo2, Moon, Sun, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Save, Hash, Trash2, RotateCcw, Braces, WrapText, History } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -27,6 +27,7 @@ import { GlobalSearch } from '@/components/workspace/global-search'
 import { DiffDialog } from '@/components/workspace/diff-dialog'
 import { SaveAsDialog, suggestFileName } from '@/components/workspace/save-as-dialog'
 import { ApplyTargetDialog } from '@/components/workspace/apply-target-dialog'
+import { VersionHistoryDialog } from '@/components/workspace/version-history-dialog'
 import { ShortcutsDialog } from '@/components/workspace/shortcuts-dialog'
 import pkg from '../../package.json'
 import type { ChatMsg, FileFull, FileMeta, SessionMeta } from '@/lib/types'
@@ -97,6 +98,8 @@ export default function WorkspacePage() {
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
+  // 历史版本对话框目标文件（编辑器工具栏 / 文件树右键 / 命令面板三处入口）
+  const [versionHistoryState, setVersionHistoryState] = useState<{ id: string; path: string } | null>(null)
   // 快捷键帮助面板（Ctrl/⌘ + /）
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   // 最近一次 @ 引用的文件 ID（供应用目标对话框展示）
@@ -1323,6 +1326,8 @@ export default function WorkspacePage() {
           clearTimeout(saveTimersRef.current[fileId])
           delete saveTimersRef.current[fileId]
         }
+        // 文件树 / 最近文件按 updatedAt 排序，静默刷新
+        void refreshFiles()
         return true
       } catch (error) {
         toast({
@@ -1333,7 +1338,7 @@ export default function WorkspacePage() {
         return false
       }
     },
-    [toast]
+    [refreshFiles, toast]
   )
 
   /** 点击「应用到文件…」→ 打开目标选择对话框 */
@@ -1801,6 +1806,7 @@ export default function WorkspacePage() {
         if (rest.length) void importDroppedFiles(rest)
       }}
       onImportZip={(f) => void importZip(f)}
+      onOpenVersions={(f) => setVersionHistoryState({ id: f.id, path: f.path })}
       importingFiles={importingFiles}
     />
   )
@@ -1846,7 +1852,11 @@ export default function WorkspacePage() {
         setGotoValue('')
         setGotoOpen(true)
       }}
-      onRollback={rollbackFile}
+      onOpenHistory={() => {
+        const tab = activeTabRef.current
+        if (!tab) return
+        setVersionHistoryState({ id: tab.id, path: tab.path })
+      }}
       onSave={() => {
         const tab = activeTabRef.current
         if (!tab) return
@@ -1942,6 +1952,18 @@ export default function WorkspacePage() {
           >
             <Braces className="h-4 w-4 text-clay" />
             <span>格式化当前 JSON 文件</span>
+          </CommandItem>
+          <CommandItem
+            value="查看当前文件历史版本 回滚快照"
+            onSelect={() => {
+              setCmdOpen(false)
+              const tab = activeTabRef.current
+              if (tab) setVersionHistoryState({ id: tab.id, path: tab.path })
+            }}
+            disabled={!activeTab}
+          >
+            <History className="h-4 w-4 text-clay" />
+            <span>查看当前文件历史版本</span>
           </CommandItem>
           <CommandItem
             value="切换代码块自动换行 换行偏好"
@@ -2225,6 +2247,14 @@ export default function WorkspacePage() {
         suggestedName={saveAsState?.suggested ?? ''}
         creating={savingAs}
         onConfirm={(path) => void confirmSaveAs(path)}
+      />
+      {/* 历史版本（编辑器工具栏 / 文件树右键 / 命令面板三处入口；回滚同步标签与文件树） */}
+      <VersionHistoryDialog
+        open={!!versionHistoryState}
+        onOpenChange={(open) => !open && setVersionHistoryState(null)}
+        fileId={versionHistoryState?.id ?? ''}
+        filePath={versionHistoryState?.path}
+        onRollback={rollbackFile}
       />
       {/* 快捷键帮助（Ctrl/⌘ + /） */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

@@ -13,6 +13,7 @@ import {
   FolderInput,
   FolderPlus,
   FolderOpen,
+  History,
   Import,
   Loader2,
   MoreVertical,
@@ -181,6 +182,8 @@ interface FileTreeProps {
   onImportFiles: (dropped: File[]) => void
   /** 从本地选择 ZIP 压缩包导入（服务端解包建文件） */
   onImportZip: (file: File) => void
+  /** 右键「历史版本」：查看该文件快照（无需先打开文件） */
+  onOpenVersions?: (file: FileMeta) => void
   importingFiles: boolean
 }
 
@@ -198,6 +201,7 @@ export function FileTree({
   onQuickOpen,
   onImportFiles,
   onImportZip,
+  onOpenVersions,
   importingFiles,
 }: FileTreeProps) {
   const { toast } = useToast()
@@ -484,6 +488,9 @@ export function FileTree({
             }}
           >
             <Pencil className="h-3.5 w-3.5" /> 重命名
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onOpenVersions?.(file)}>
+            <History className="h-3.5 w-3.5" /> 历史版本
           </ContextMenuItem>
           <ContextMenuItem
             className="text-destructive focus:text-destructive"
