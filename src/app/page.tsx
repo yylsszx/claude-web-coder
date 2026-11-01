@@ -96,6 +96,9 @@ export default function WorkspacePage() {
   // 批量应用队列：多代码块依次走「选目标 → diff 确认」，取消即终止
   const [pendingBatch, setPendingBatch] = useState<{ codes: string[]; idx: number } | null>(null)
   const [diffState, setDiffState] = useState<{ file: FileFull; original: string; code: string } | null>(null)
+  // 查看未保存更改（标签右键菜单）：对比服务器已存版本与编辑器当前内容，可按块选择性保存
+  const [unsavedDiff, setUnsavedDiff] = useState<{ tabId: string; path: string; original: string; incoming: string } | null>(null)
+  const [savingUnsavedDiff, setSavingUnsavedDiff] = useState(false)
   const [saveAsState, setSaveAsState] = useState<{ code: string; language: string; suggested: string } | null>(null)
   const [savingAs, setSavingAs] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
@@ -143,6 +146,54 @@ export default function WorkspacePage() {
   const undoRef = useRef<{ fileId: string; prevContent: string } | null>(null)
   // 编辑器「插入到光标」函数注册表（由 CodeEditor 注册）
   const insertToEditorRef = useRef<((text: string) => void) | null>(null)
+
+  // ===== 后台生成完成提醒 =====
+  // 生成完成时若浏览器标签页不可见 / 窗口失焦，闪动标签页标题提醒；回到前台立即恢复标准标题
+  const titleFlashTimersRef = useRef<number[]>([])
+  /** 按当前活动文件计算标准标题（与上方 title effect 同一格式，恢复时保证一致） */
+  const computeBaseTitle = useCallback(() => {
+    const p = activeTabRef.current?.path
+    return p ? `${p.split('/').pop()} — Claude 风格 AI 编程工作台` : 'Claude 风格 AI 编程工作台'
+  }, [])
+  /** 停止闪动并恢复标准标题 */
+  const clearTitleFlash = useCallback(() => {
+    titleFlashTimersRef.current.forEach((t) => clearTimeout(t))
+    titleFlashTimersRef.current = []
+    document.title = computeBaseTitle()
+  }, [computeBaseTitle])
+  /** 生成完成调用：前台可见且聚焦时不打扰；否则「✓ 生成完成」与标准标题交替闪 3 次 */
+  const notifyStreamComplete = useCallback(() => {
+    if (document.visibilityState === 'visible' && document.hasFocus()) return
+    clearTitleFlash()
+    const baseTitle = computeBaseTitle()
+    const doneTitle = `✓ 生成完成 · ${baseTitle}`
+    let step = 0
+    const blink = () => {
+      document.title = step % 2 === 0 ? doneTitle : baseTitle
+      step += 1
+      if (step < 6) {
+        titleFlashTimersRef.current.push(window.setTimeout(blink, 700))
+      } else {
+        titleFlashTimersRef.current = []
+        document.title = baseTitle
+      }
+    }
+    blink()
+  }, [clearTitleFlash, computeBaseTitle])
+  // 回到前台立即停止闪动恢复标题；卸载时清理定时器（防止后台闪动泄漏）
+  useEffect(() => {
+    const stop = () => {
+      if (titleFlashTimersRef.current.length) clearTitleFlash()
+    }
+    window.addEventListener('focus', stop)
+    document.addEventListener('visibilitychange', stop)
+    return () => {
+      window.removeEventListener('focus', stop)
+      document.removeEventListener('visibilitychange', stop)
+      titleFlashTimersRef.current.forEach((t) => clearTimeout(t))
+      titleFlashTimersRef.current = []
+    }
+  }, [clearTitleFlash])
 
   // ===== 会话 =====
   const refreshSessions = useCallback(async (): Promise<SessionMeta[]> => {
@@ -298,6 +349,38 @@ export default function WorkspacePage() {
       }
     },
     [refreshSessions, toast]
+  )
+
+  /** 从指定消息分叉新会话：复制该消息及之前的全部对话为新会话并切换（此后独立续聊，源会话不受影响） */
+  const forkSession = useCallback(
+    async (messageId: string) => {
+      const sessionId = activeSessionRef.current
+      if (!sessionId) return
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/fork`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? '分叉失败')
+        await refreshSessions()
+        setActiveSessionId(data.session.id)
+        setStreamingId(null)
+        await loadMessages(data.session.id)
+        toast({
+          title: '已从该消息分叉新会话',
+          description: `「${data.session.title}」，含 ${data.session.messageCount} 条消息`,
+        })
+      } catch (error) {
+        toast({
+          title: '分叉会话失败',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [refreshSessions, loadMessages, toast]
   )
 
   const deleteSession = useCallback(
@@ -507,6 +590,50 @@ export default function WorkspacePage() {
       })
     }
   }, [saveTab, tabStates, toast])
+
+  // ===== 查看未保存更改 =====
+  /** 打开未保存更改对比：original=服务器已存版本，incoming=编辑器当前内容 */
+  const openUnsavedDiff = useCallback(
+    async (tabId: string) => {
+      const tab = openTabsRef.current.find((t) => t.id === tabId)
+      if (!tab) return
+      try {
+        const res = await fetch(`/api/files/${tabId}`)
+        if (!res.ok) throw new Error((await res.json()).error ?? '读取服务器版本失败')
+        const data = await res.json()
+        const server = (data.file?.content ?? '') as string
+        setUnsavedDiff({ tabId, path: tab.path, original: server, incoming: tab.content })
+      } catch (error) {
+        toast({
+          title: '无法打开对比',
+          description: error instanceof Error ? error.message : '请稍后重试',
+          variant: 'destructive',
+        })
+      }
+    },
+    [toast]
+  )
+
+  /** 确认保存所选改动：取消待执行自动保存（避免旧内容覆盖按块保存结果），按 finalContent 写入服务器并同步编辑器 */
+  const confirmUnsavedDiff = useCallback(
+    async (finalContent: string) => {
+      const target = unsavedDiff
+      if (!target) return
+      if (saveTimersRef.current[target.tabId]) {
+        clearTimeout(saveTimersRef.current[target.tabId])
+        delete saveTimersRef.current[target.tabId]
+      }
+      setSavingUnsavedDiff(true)
+      const ok = await saveTab(target.tabId, finalContent)
+      setSavingUnsavedDiff(false)
+      if (ok) {
+        setUnsavedDiff(null)
+        toast({ title: '已按所选改动保存' })
+      }
+      // 失败时 saveTab 已 toast，保持对话框打开便于重试
+    },
+    [unsavedDiff, saveTab, toast]
+  )
 
   const scheduleSave = useCallback(
     (
@@ -1157,6 +1284,8 @@ export default function WorkspacePage() {
           )
           // 会话可能被服务端自动命名/更新，刷新列表
           void refreshSessions()
+          // 后台完成提醒：标签页不可见 / 失焦时闪动标题（正常完成才提醒，中断 / 报错不提醒）
+          notifyStreamComplete()
         }
       } catch (error) {
         if (flushTimer) {
@@ -1226,7 +1355,7 @@ export default function WorkspacePage() {
         setStreamingId(null)
       }
     },
-    [refreshSessions, toast]
+    [refreshSessions, toast, notifyStreamComplete]
   )
 
   /** 发送消息（普通模式）；includeFile 由附件 chip 控制，mentionIds 为 @ 引用文件 */
@@ -2024,6 +2153,7 @@ export default function WorkspacePage() {
       onCloseOtherTabs={closeOtherTabs}
       onCloseRightTabs={closeRightTabs}
       onCloseAllTabs={closeAllTabs}
+      onViewUnsavedDiff={(tabId) => void openUnsavedDiff(tabId)}
       onReorderTabs={reorderTabs}
       onChange={handleEditorChange}
       jumpTarget={jumpTarget}
@@ -2078,6 +2208,7 @@ export default function WorkspacePage() {
       onExportAllSessions={() => void exportAllSessions()}
       onExportSessionJson={(id) => void exportSessionJson(id)}
       onDuplicateSession={(id) => void duplicateSession(id)}
+      onForkSession={(messageId) => void forkSession(messageId)}
       onSend={sendMessage}
       onStop={stopGeneration}
       onClear={clearChat}
@@ -2441,6 +2572,19 @@ export default function WorkspacePage() {
             ? { current: pendingBatch.idx + 1, total: pendingBatch.codes.length }
             : undefined
         }
+      />
+      {/* 查看未保存更改：服务器版本 vs 编辑器当前内容，确认=按所选块保存 */}
+      <DiffDialog
+        mode="unsaved"
+        open={!!unsavedDiff}
+        onOpenChange={(open) => {
+          if (!open && !savingUnsavedDiff) setUnsavedDiff(null)
+        }}
+        filePath={unsavedDiff?.path ?? ''}
+        original={unsavedDiff?.original ?? ''}
+        incoming={unsavedDiff?.incoming ?? ''}
+        applying={savingUnsavedDiff}
+        onConfirm={(finalContent) => void confirmUnsavedDiff(finalContent)}
       />
       {/* 代码块存为新文件 */}
       <SaveAsDialog

@@ -10,6 +10,7 @@ import {
   Download,
   Eraser,
   FileCode2,
+  GitFork,
   ImagePlus,
   ListTree,
   Loader2,
@@ -92,6 +93,8 @@ interface ChatPanelProps {
   onExportSessionJson: (id: string) => void
   /** 克隆会话（复制标题与全部消息为新会话并切到副本） */
   onDuplicateSession: (id: string) => void
+  /** 从指定消息分叉新会话（复制该消息及之前的对话为副本并切换） */
+  onForkSession: (messageId: string) => void
   /** 发送消息；includeFile 控制是否把当前打开的文件作为上下文发给 AI；mentionIds 为 @ 引用的文件；attachments 为图片附件 */
   onSend: (message: string, includeFile: boolean, mentionIds?: string[], attachments?: string[]) => void
   onStop: () => void
@@ -219,6 +222,7 @@ export function ChatPanel({
   onExportAllSessions,
   onExportSessionJson,
   onDuplicateSession,
+  onForkSession,
   onSend,
   onStop,
   onClear,
@@ -1660,6 +1664,14 @@ export function ChatPanel({
                   <Quote className="h-3 w-3" />
                   引用
                 </button>
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => onForkSession(msg.id)}
+                  title="从这条回复分叉新会话（复制到此为止的对话，此后独立续聊）"
+                >
+                  <GitFork className="h-3 w-3" />
+                  分叉
+                </button>
                 {idx === lastMsgIndex && canRegenerate && (
                   <button
                     className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
@@ -1704,6 +1716,14 @@ export function ChatPanel({
                       复制
                     </>
                   )}
+                </button>
+                <button
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-clay"
+                  onClick={() => onForkSession(msg.id)}
+                  title="从这条提问分叉新会话（复制到此为止的对话，此后独立续聊）"
+                >
+                  <GitFork className="h-3 w-3" />
+                  分叉
                 </button>
                 {renderDeleteBtn(msg)}
               </div>

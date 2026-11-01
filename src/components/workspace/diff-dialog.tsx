@@ -27,6 +27,11 @@ interface DiffDialogProps {
   onConfirm: (finalContent: string) => void
   /** 批量应用进度（多代码块队列中显示「第 X / N 段」） */
   batchProgress?: { current: number; total: number }
+  /**
+   * 展示模式：apply=应用 AI 代码（默认，对比原文件与 AI 代码）；
+   * unsaved=查看未保存更改（对比服务器已存版本与编辑器当前内容，确认=按所选块保存）
+   */
+  mode?: 'apply' | 'unsaved'
 }
 
 type DiffRow = { type: 'add' | 'del' | 'same'; text: string }
@@ -113,7 +118,8 @@ function buildFinalContent(
   return text
 }
 
-/** 应用前 diff 预览：对比当前文件内容与 AI 生成的代码，支持逐块应用/跳过 */
+/** 应用前 diff 预览：对比当前文件内容与 AI 生成的代码，支持逐块应用/跳过；
+ *  unsaved 模式复用同一交互查看未保存更改（服务器版本 vs 编辑器当前内容，确认=按块保存） */
 export function DiffDialog({
   open,
   onOpenChange,
@@ -123,7 +129,9 @@ export function DiffDialog({
   applying,
   onConfirm,
   batchProgress,
+  mode = 'apply',
 }: DiffDialogProps) {
+  const isUnsaved = mode === 'unsaved'
   const rows = useMemo(
     () => (open ? buildRows(original, incoming) : []),
     [open, original, incoming]
@@ -168,21 +176,32 @@ export function DiffDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-claude-serif">
             <FileDiff className="h-4.5 w-4.5 text-clay" />
-            应用前预览改动
+            {isUnsaved ? '未保存的更改' : '应用前预览改动'}
           </DialogTitle>
           <DialogDescription>
+            {isUnsaved && (
+              <span className="mr-1 text-muted-foreground">编辑器当前内容与服务器已存版本的差异，可按块选择保存：</span>
+            )}
             {batchProgress && (
               <span className="mr-1.5 rounded-full bg-clay/10 px-1.5 py-0.5 text-[11px] text-clay">
                 第 {batchProgress.current} / {batchProgress.total} 段
               </span>
             )}
             {stats.total === 0
-              ? 'AI 代码与当前文件内容一致'
+              ? isUnsaved
+                ? '未保存改动与服务器版本一致'
+                : 'AI 代码与当前文件内容一致'
               : stats.skipped >= stats.total
-                ? '未应用任何改动'
+                ? isUnsaved
+                  ? '将不保存任何改动（维持服务器版本）'
+                  : '未应用任何改动'
                 : stats.skipped > 0
-                  ? '部分替换'
-                  : '将用 AI 代码整体替换'}{' '}
+                  ? isUnsaved
+                    ? '部分保存'
+                    : '部分替换'
+                  : isUnsaved
+                    ? '将保存全部未保存改动'
+                    : '将用 AI 代码整体替换'}{' '}
             <span className="font-mono text-foreground">{filePath}</span>
             {stats.skipped < stats.total && (
               <>
@@ -196,14 +215,16 @@ export function DiffDialog({
                 （已跳过 {stats.skipped} / {stats.total} 块）
               </span>
             )}
-            （应用后自动保存）
+            {isUnsaved ? '（确认后写入服务器并同步编辑器）' : '（应用后自动保存）'}
           </DialogDescription>
         </DialogHeader>
 
         {hunks.length > 0 && (
           <div className="flex shrink-0 items-center justify-between gap-2">
             <p className="text-[11.5px] text-muted-foreground">
-              点击改动块标题可跳过该块（保留原文件对应内容）
+              {isUnsaved
+                ? '点击改动块标题可跳过该块（保存时保留服务器版本对应内容）'
+                : '点击改动块标题可跳过该块（保留原文件对应内容）'}
             </p>
             <div className="flex shrink-0 gap-1">
               <Button
@@ -213,7 +234,7 @@ export function DiffDialog({
                 disabled={applying || excluded.size === 0}
                 onClick={() => setExcluded(new Set())}
               >
-                全部应用
+                {isUnsaved ? '全部保留' : '全部应用'}
               </Button>
               <Button
                 variant="ghost"
@@ -222,7 +243,7 @@ export function DiffDialog({
                 disabled={applying || excluded.size >= hunks.length}
                 onClick={() => setExcluded(new Set(hunks.map((h) => h.id)))}
               >
-                全部跳过
+                {isUnsaved ? '全部放弃' : '全部跳过'}
               </Button>
             </div>
           </div>
@@ -231,7 +252,7 @@ export function DiffDialog({
         <div className="thin-scrollbar min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card">
           {rows.length === 0 || hunks.length === 0 ? (
             <p className="p-4 text-center text-[13px] text-muted-foreground">
-              内容完全一致，无需应用
+              {isUnsaved ? '与服务器版本一致，无未保存更改' : '内容完全一致，无需应用'}
             </p>
           ) : (
             <div className="font-mono text-[12px] leading-[1.55]">
@@ -286,7 +307,7 @@ export function DiffDialog({
             disabled={applying || unchanged}
             title={unchanged ? '所选块应用后与原文件一致' : undefined}
           >
-            {applying ? '应用中…' : unchanged ? '无改动可应用' : '应用并保存'}
+            {applying ? (isUnsaved ? '保存中…' : '应用中…') : unchanged ? (isUnsaved ? '与服务器版本一致' : '无改动可应用') : isUnsaved ? '按所选改动保存' : '应用并保存'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -305,7 +326,15 @@ export function DiffDialog({
             ? 'bg-muted/30 text-muted-foreground hover:bg-muted/50'
             : 'bg-clay/[0.07] text-foreground/80 hover:bg-clay/[0.12]'
         }`}
-        title={off ? '点击恢复应用该块' : '点击跳过该块（保留原内容）'}
+        title={
+          off
+            ? isUnsaved
+              ? '点击恢复保留该块（保存编辑器当前内容）'
+              : '点击恢复应用该块'
+            : isUnsaved
+              ? '点击跳过该块（保存时维持服务器版本）'
+              : '点击跳过该块（保留原内容）'
+        }
       >
         <span
           className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
@@ -318,7 +347,7 @@ export function DiffDialog({
         <span className="text-green-600">+{h.add}</span>
         <span className="text-red-500">-{h.del}</span>
         <span className={`ml-auto ${off ? 'text-muted-foreground/70' : 'text-clay'}`}>
-          {off ? '已跳过 · 保留原内容' : '将应用'}
+          {off ? (isUnsaved ? '已跳过 · 保留服务器版本' : '已跳过 · 保留原内容') : isUnsaved ? '将保存' : '将应用'}
         </span>
       </button>
     )

@@ -319,6 +319,8 @@ interface CodeEditorProps {
   onCloseRightTabs: (id: string) => void
   /** 右键菜单：关闭全部标签 */
   onCloseAllTabs: () => void
+  /** 右键菜单：查看未保存更改（对比服务器版本与编辑器当前内容，可按块保存）；未保存标签才显示 */
+  onViewUnsavedDiff?: (tabId: string) => void
   /** 拖拽排序：把 fromId 标签移动到 toId 位置 */
   onReorderTabs: (fromId: string, toId: string) => void
   onChange: (value: string) => void
@@ -363,6 +365,7 @@ export function CodeEditor({
   onCloseOtherTabs,
   onCloseRightTabs,
   onCloseAllTabs,
+  onViewUnsavedDiff,
   onReorderTabs,
   onChange,
   onSave,
@@ -1045,6 +1048,18 @@ export function CodeEditor({
                   </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-44">
+                  {onViewUnsavedDiff && (
+                    <ContextMenuItem
+                      onSelect={() => onViewUnsavedDiff(tab.id)}
+                      title={
+                        isDirty
+                          ? '对比未保存内容与服务器已存版本，可按块选择性保存'
+                          : '检查编辑器内容与服务器版本是否一致'
+                      }
+                    >
+                      {isDirty ? '查看未保存更改' : '与服务器版本对比'}
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuItem
                     disabled={tabs.length <= 1}
                     onSelect={() => onCloseOtherTabs(tab.id)}
